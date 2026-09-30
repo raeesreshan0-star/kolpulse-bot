@@ -25,4 +25,5 @@ jobs:
       - name: Run KOLPulse Bot
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          GROUP_CHAT_ID: ${{ secrets.GROUP_CHAT_ID }}
         run: python bot.py
