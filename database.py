@@ -271,6 +271,70 @@ def get_calls_for_kol_after_verification(
 
 
 # =========================================================
+# KOL LEADERBOARD
+# =========================================================
+
+def get_kol_leaderboard(limit=10):
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT
+            LOWER(
+                REPLACE(c.kol_username, '@', '')
+            ) AS kol_username,
+
+            MAX(c.kol_link) AS kol_link,
+
+            COUNT(c.id) AS total_calls,
+
+            SUM(
+                CASE
+                    WHEN c.multiplier >= 2
+                    THEN 1
+                    ELSE 0
+                END
+            ) AS two_x_calls,
+
+            MAX(c.multiplier) AS best_multiplier,
+
+            AVG(c.multiplier) AS average_multiplier
+
+        FROM calls c
+
+        INNER JOIN verified_channels v
+            ON LOWER(
+                REPLACE(c.kol_username, '@', '')
+            ) = LOWER(
+                REPLACE(v.channel_username, '@', '')
+            )
+
+        WHERE c.created_at >= v.verified_at
+
+        GROUP BY
+            LOWER(
+                REPLACE(c.kol_username, '@', '')
+            )
+
+        ORDER BY
+            average_multiplier DESC,
+            two_x_calls DESC,
+            total_calls DESC
+
+        LIMIT ?
+    """, (
+        limit,
+    ))
+
+    leaderboard = cursor.fetchall()
+
+    conn.close()
+
+    return leaderboard
+
+
+# =========================================================
 # UPDATE CALL MULTIPLIER
 # =========================================================
 
@@ -295,4 +359,4 @@ def update_call_multiplier(
     ))
 
     conn.commit()
-    conn.close() 
+    conn.close()
