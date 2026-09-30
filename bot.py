@@ -1,6 +1,11 @@
 import os
 import re
 import html
+import json
+import asyncio
+import urllib.parse
+import urllib.request
+
 from datetime import datetime
 
 from telegram import (
@@ -39,6 +44,35 @@ GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID", "").strip()
 LIVE_CHANNEL = "@KOLPulse_Live"
 BOT_USERNAME = "@KOLPulse_Live_bot"
 BOT_LINK = "https://t.me/KOLPulse_Live_bot"
+
+DEX_API_BASE = "https://api.dexscreener.com"
+
+# Live MC refresh interval.
+# 60 seconds is safely within DexScreener's documented
+# token endpoint rate limit.
+TRACK_INTERVAL_SECONDS = 60
+
+
+# =========================================================
+# DEXSCREENER CHAIN MAP
+# =========================================================
+
+DEX_CHAIN_MAP = {
+    "SOL": "solana",
+    "ETH": "ethereum",
+    "BASE": "base",
+    "BSC": "bsc",
+    "ARB": "arbitrum",
+    "POLY": "polygon",
+    "AVAX": "avalanche",
+    "OP": "optimism",
+    "ZKSYNC": "zksync",
+    "LINEA": "linea",
+    "BLAST": "blast",
+    "SONIC": "sonic",
+    "MONAD": "monad",
+    "HYPER": "hyperevm",
+}
 
 
 # =========================================================
@@ -95,6 +129,84 @@ def ensure_tracking_requests_table():
 
     conn.commit()
     conn.close()
+
+
+# =========================================================
+# CALL TRACKING COLUMNS
+# =========================================================
+
+def ensure_call_tracking_columns():
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+
+        cursor.execute(
+            "PRAGMA table_info(calls)"
+        )
+
+        columns = {
+            row[1]
+            for row in cursor.fetchall()
+        }
+
+        if "contract" not in columns:
+
+            cursor.execute("""
+                ALTER TABLE calls
+                ADD COLUMN contract TEXT
+            """)
+
+            print(
+                "✅ Added calls.contract"
+            )
+
+        if "chain" not in columns:
+
+            cursor.execute("""
+                ALTER TABLE calls
+                ADD COLUMN chain TEXT
+            """)
+
+            print(
+                "✅ Added calls.chain"
+            )
+
+        if "ath_mc" not in columns:
+
+            cursor.execute("""
+                ALTER TABLE calls
+                ADD COLUMN ath_mc REAL DEFAULT 0
+            """)
+
+            print(
+                "✅ Added calls.ath_mc"
+            )
+
+        if "last_milestone" not in columns:
+
+            cursor.execute("""
+                ALTER TABLE calls
+                ADD COLUMN last_milestone INTEGER DEFAULT 1
+            """)
+
+            print(
+                "✅ Added calls.last_milestone"
+            )
+
+        conn.commit()
+
+    except Exception as error:
+
+        print(
+            "❌ Could not prepare tracking columns: "
+            f"{type(error).__name__}: {error}"
+        )
+
+    finally:
+
+        conn.close()
 
 
 # =========================================================
@@ -260,8 +372,6 @@ def update_request_status(
 
 # =========================================================
 # MAIN MENU
-#
-# ONLY 5 MAIN BUTTONS
 # =========================================================
 
 def main_menu():
@@ -310,7 +420,7 @@ def main_menu():
 
 
 # =========================================================
-# ADMIN ACCEPT / REJECT BUTTONS
+# ADMIN REQUEST BUTTONS
 # =========================================================
 
 def request_buttons(
@@ -401,6 +511,14 @@ def format_market_cap(value):
 
         return "N/A"
 
+    try:
+
+        value = float(value)
+
+    except Exception:
+
+        return "N/A"
+
     if value <= 0:
 
         return "N/A"
@@ -427,7 +545,7 @@ def format_market_cap(value):
 
 
 # =========================================================
-# NUMBER + SUFFIX CONVERTER
+# NUMBER CONVERTER
 # =========================================================
 
 def convert_number(
@@ -463,7 +581,7 @@ def convert_number(
 
 
 # =========================================================
-# TOKEN SYMBOL DETECTION
+# TOKEN SYMBOL
 # =========================================================
 
 def detect_token_symbol(
@@ -473,10 +591,6 @@ def detect_token_symbol(
 
     source = text or ""
 
-    # -----------------------------------------------------
-    # $TOKEN
-    # -----------------------------------------------------
-
     match = re.search(
         r"(?<![A-Za-z0-9_])\$([A-Za-z][A-Za-z0-9_]{0,30})",
         source
@@ -485,11 +599,6 @@ def detect_token_symbol(
     if match:
 
         return "$" + match.group(1)
-
-
-    # -----------------------------------------------------
-    # Token Symbol / Symbol / Ticker
-    # -----------------------------------------------------
 
     patterns = [
 
@@ -511,11 +620,6 @@ def detect_token_symbol(
 
             return "$" + match.group(1)
 
-
-    # -----------------------------------------------------
-    # PROJECT NAME
-    # -----------------------------------------------------
-
     if project_name:
 
         match = re.search(
@@ -527,24 +631,11 @@ def detect_token_symbol(
 
             return "$" + match.group(1)
 
-
     return "$TOKEN"
 
 
 # =========================================================
-# CONTRACT / CA DETECTION
-#
-# Supports:
-#
-# CA: 0x...
-# Contract: 0x...
-# Contract Address: 0x...
-# 0x...
-# DexScreener URL:
-# https://dexscreener.com/ethereum/0x...
-#
-# IMPORTANT:
-# EVM-style CA length is made flexible.
+# CONTRACT / CA
 # =========================================================
 
 def parse_contract(text):
@@ -552,11 +643,6 @@ def parse_contract(text):
     if not text:
 
         return None
-
-
-    # =====================================================
-    # 1. EXPLICIT CA / CONTRACT
-    # =====================================================
 
     explicit_patterns = [
 
@@ -572,7 +658,6 @@ def parse_contract(text):
         r"\s*[:=\-]?\s*"
         r"`?([A-Za-z0-9]{20,160})`?",
     ]
-
 
     for pattern in explicit_patterns:
 
@@ -594,14 +679,6 @@ def parse_contract(text):
 
                 return value
 
-
-    # =====================================================
-    # 2. DEXSCREENER URL
-    #
-    # Example:
-    # https://dexscreener.com/ethereum/0xABC...
-    # =====================================================
-
     dex_patterns = [
 
         r"https?://(?:www\.)?"
@@ -614,7 +691,6 @@ def parse_contract(text):
         r"[^/\s]+/"
         r"([A-Za-z0-9]{20,160})",
     ]
-
 
     for pattern in dex_patterns:
 
@@ -634,13 +710,6 @@ def parse_contract(text):
 
                 return value
 
-
-    # =====================================================
-    # 3. ANY 0x ADDRESS
-    #
-    # Flexible length instead of only 40 chars.
-    # =====================================================
-
     evm_matches = re.findall(
         r"\b0x[a-fA-F0-9]{20,160}\b",
         text
@@ -649,11 +718,6 @@ def parse_contract(text):
     if evm_matches:
 
         return evm_matches[0]
-
-
-    # =====================================================
-    # 4. SOLANA / BASE58 STYLE ADDRESS
-    # =====================================================
 
     candidates = re.findall(
         r"\b[A-HJ-NP-Za-km-z1-9]{32,100}\b",
@@ -692,12 +756,11 @@ def parse_contract(text):
 
             return candidate
 
-
     return None
 
 
 # =========================================================
-# DEXSCREENER CHAIN DETECTION
+# DEX CHAIN DETECTION
 # =========================================================
 
 def detect_dex_chain(text):
@@ -705,7 +768,6 @@ def detect_dex_chain(text):
     if not text:
 
         return None
-
 
     match = re.search(
 
@@ -718,61 +780,40 @@ def detect_dex_chain(text):
         re.IGNORECASE
     )
 
-
     if not match:
 
         return None
 
-
     chain = match.group(1).strip().lower()
-
 
     chain_map = {
 
         "ethereum": "ETH",
-
         "solana": "SOL",
-
         "base": "BASE",
-
         "bsc": "BSC",
-
         "arbitrum": "ARB",
-
         "polygon": "POLY",
-
         "avalanche": "AVAX",
-
         "optimism": "OP",
-
         "zksync": "ZKSYNC",
-
         "linea": "LINEA",
-
         "scroll": "SCROLL",
-
         "blast": "BLAST",
-
         "sonic": "SONIC",
-
         "monad": "MONAD",
-
         "hyperevm": "HYPER",
-
-        "robinhood": "ROBINHOOD",
     }
-
 
     if chain in chain_map:
 
         return chain_map[chain]
 
-
     return chain.upper()
 
 
 # =========================================================
-# MARKET CAP / MC DETECTION
+# MARKET CAP DETECTION FROM POST
 # =========================================================
 
 def parse_market_cap(text):
@@ -781,37 +822,31 @@ def parse_market_cap(text):
 
         return None
 
-
     patterns = [
 
-        # Market Cap: $50K
         r"(?:market\s*cap|marketcap)"
         r"\s*(?:is|:|=|-)?\s*"
         r"\$?\s*"
         r"([0-9]+(?:\.[0-9]+)?)"
         r"\s*([KMB])?\b",
 
-        # Current MC: $50K
         r"(?:current\s*mc)"
         r"\s*(?:is|:|=|-)?\s*"
         r"\$?\s*"
         r"([0-9]+(?:\.[0-9]+)?)"
         r"\s*([KMB])?\b",
 
-        # MC: $50K
         r"\bmc\b"
         r"\s*(?:is|:|=|-)?\s*"
         r"\$?\s*"
         r"([0-9]+(?:\.[0-9]+)?)"
         r"\s*([KMB])?\b",
 
-        # $50K MC
         r"\$?\s*"
         r"([0-9]+(?:\.[0-9]+)?)"
         r"\s*([KMB])?"
         r"\s*(?:mc|market\s*cap)\b",
 
-        # Current chart is $50K mc
         r"(?:current\s+chart|chart|"
         r"current\s+market\s+cap)"
         r".{0,100}?"
@@ -820,7 +855,6 @@ def parse_market_cap(text):
         r"\s*([KMB])?"
         r"\s*mc\b",
     ]
-
 
     for pattern in patterns:
 
@@ -837,12 +871,11 @@ def parse_market_cap(text):
                 match.group(2)
             )
 
-
     return None
 
 
 # =========================================================
-# PROJECT / SOCIAL LINKS
+# PROJECT LINKS
 # =========================================================
 
 def parse_project_links(text):
@@ -855,13 +888,11 @@ def parse_project_links(text):
             "x_link": None,
         }
 
-
     urls = re.findall(
         r"https?://[^\s<>()]+",
         text,
         re.IGNORECASE
     )
-
 
     cleaned_urls = []
 
@@ -875,15 +906,9 @@ def parse_project_links(text):
             url
         )
 
-
     dex_link = None
     x_link = None
     project_link = None
-
-
-    # -----------------------------------------------------
-    # DEXSCREENER
-    # -----------------------------------------------------
 
     for url in cleaned_urls:
 
@@ -892,11 +917,6 @@ def parse_project_links(text):
             dex_link = url
 
             break
-
-
-    # -----------------------------------------------------
-    # X / TWITTER
-    # -----------------------------------------------------
 
     for url in cleaned_urls:
 
@@ -911,13 +931,6 @@ def parse_project_links(text):
 
             break
 
-
-    # -----------------------------------------------------
-    # PREFERRED PROJECT LINK
-    #
-    # X first, then DEX, then first URL.
-    # -----------------------------------------------------
-
     if x_link:
 
         project_link = x_link
@@ -929,7 +942,6 @@ def parse_project_links(text):
     elif cleaned_urls:
 
         project_link = cleaned_urls[0]
-
 
     return {
         "project_link": project_link,
@@ -955,11 +967,6 @@ def parse_project_name(
 
         return "Unknown Project"
 
-
-    # =====================================================
-    # EXPLICIT PROJECT NAME
-    # =====================================================
-
     for line in text.splitlines():
 
         clean = line.strip()
@@ -981,15 +988,6 @@ def parse_project_name(
 
                 return value
 
-
-    # =====================================================
-    # $TOKEN FIRST LINE
-    #
-    # Example:
-    # $IP 🔹
-    # $VRAX 🔥
-    # =====================================================
-
     for line in text.splitlines():
 
         clean = line.strip()
@@ -1002,14 +1000,7 @@ def parse_project_name(
 
         if match:
 
-            return (
-                "$" + match.group(1)
-            )
-
-
-    # =====================================================
-    # NAME WITH $TOKEN
-    # =====================================================
+            return "$" + match.group(1)
 
     for line in text.splitlines():
 
@@ -1028,11 +1019,6 @@ def parse_project_name(
 
                 return clean
 
-
-    # =====================================================
-    # X HANDLE
-    # =====================================================
-
     x_match = re.search(
         r"(?:x\.com|twitter\.com)/"
         r"([A-Za-z0-9_]+)",
@@ -1042,19 +1028,11 @@ def parse_project_name(
 
     if x_match:
 
-        return (
-            x_match.group(1)
-        )
-
-
-    # =====================================================
-    # CONTRACT FALLBACK
-    # =====================================================
+        return x_match.group(1)
 
     if contract:
 
         return contract[:12]
-
 
     return "Unknown Project"
 
@@ -1068,7 +1046,6 @@ def detect_chain_symbol(
     contract=None
 ):
 
-    # First try DexScreener URL.
     dex_chain = detect_dex_chain(
         text
     )
@@ -1077,11 +1054,9 @@ def detect_chain_symbol(
 
         return dex_chain
 
-
     source = (
         text or ""
     ).lower()
-
 
     if (
         "solana" in source
@@ -1089,7 +1064,6 @@ def detect_chain_symbol(
     ):
 
         return "SOL"
-
 
     if (
         "ethereum" in source
@@ -1099,14 +1073,12 @@ def detect_chain_symbol(
 
         return "ETH"
 
-
     if (
         "base chain" in source
         or "base:" in source
     ):
 
         return "BASE"
-
 
     if (
         "bsc" in source
@@ -1116,14 +1088,12 @@ def detect_chain_symbol(
 
         return "BSC"
 
-
     if (
         "arbitrum" in source
         or "arb:" in source
     ):
 
         return "ARB"
-
 
     if (
         "polygon" in source
@@ -1132,14 +1102,12 @@ def detect_chain_symbol(
 
         return "POLY"
 
-
     if (
         "avalanche" in source
         or "avax" in source
     ):
 
         return "AVAX"
-
 
     if contract and re.fullmatch(
         r"0x[a-fA-F0-9]{20,160}",
@@ -1148,12 +1116,11 @@ def detect_chain_symbol(
 
         return "EVM"
 
-
     return "UNKNOWN"
 
 
 # =========================================================
-# VERIFIED CHANNEL CHECK
+# VERIFIED CHANNEL
 # =========================================================
 
 def is_verified_channel(channel):
@@ -1172,7 +1139,6 @@ def is_verified_channel(channel):
 
             return True
 
-
     except Exception as error:
 
         print(
@@ -1181,8 +1147,722 @@ def is_verified_channel(channel):
             f"{type(error).__name__}: {error}"
         )
 
-
     return False
+
+
+# =========================================================
+# LIVE DEXSCREENER MARKET CAP
+# =========================================================
+
+def fetch_dex_market_cap_sync(
+    contract,
+    chain_symbol=None
+):
+
+    if not contract:
+
+        return None
+
+    contract = contract.strip()
+
+    chain_id = DEX_CHAIN_MAP.get(
+        (chain_symbol or "").upper()
+    )
+
+    urls = []
+
+    # -----------------------------------------------------
+    # Preferred: token-pairs endpoint
+    # -----------------------------------------------------
+
+    if chain_id:
+
+        encoded_contract = (
+            urllib.parse.quote(
+                contract,
+                safe=""
+            )
+        )
+
+        urls.append(
+            f"{DEX_API_BASE}/token-pairs/v1/"
+            f"{chain_id}/{encoded_contract}"
+        )
+
+        # Also try tokens endpoint.
+        urls.append(
+            f"{DEX_API_BASE}/tokens/v1/"
+            f"{chain_id}/{encoded_contract}"
+        )
+
+    # -----------------------------------------------------
+    # Fallback search
+    # -----------------------------------------------------
+
+    encoded_query = urllib.parse.quote(
+        contract,
+        safe=""
+    )
+
+    urls.append(
+        f"{DEX_API_BASE}/latest/dex/search"
+        f"?q={encoded_query}"
+    )
+
+    for api_url in urls:
+
+        try:
+
+            request = urllib.request.Request(
+
+                api_url,
+
+                headers={
+                    "User-Agent":
+                    "KOLPulse/1.0"
+                }
+            )
+
+            with urllib.request.urlopen(
+                request,
+                timeout=12
+            ) as response:
+
+                raw = response.read()
+
+            data = json.loads(
+                raw.decode("utf-8")
+            )
+
+            if isinstance(data, list):
+
+                pairs = data
+
+            elif isinstance(data, dict):
+
+                pairs = (
+                    data.get("pairs")
+                    or []
+                )
+
+            else:
+
+                pairs = []
+
+            if not pairs:
+
+                continue
+
+            valid_pairs = []
+
+            for pair in pairs:
+
+                if not isinstance(
+                    pair,
+                    dict
+                ):
+
+                    continue
+
+                market_cap = pair.get(
+                    "marketCap"
+                )
+
+                if market_cap is None:
+
+                    # Some responses can have
+                    # FDV but no market cap.
+                    market_cap = pair.get(
+                        "fdv"
+                    )
+
+                if market_cap is None:
+
+                    continue
+
+                try:
+
+                    market_cap = float(
+                        market_cap
+                    )
+
+                except Exception:
+
+                    continue
+
+                if market_cap <= 0:
+
+                    continue
+
+                liquidity = (
+                    pair.get(
+                        "liquidity"
+                    )
+                    or {}
+                )
+
+                try:
+
+                    liquidity_usd = float(
+                        liquidity.get(
+                            "usd"
+                        )
+                        or 0
+                    )
+
+                except Exception:
+
+                    liquidity_usd = 0
+
+                valid_pairs.append(
+                    (
+                        market_cap,
+                        liquidity_usd,
+                        pair
+                    )
+                )
+
+            if not valid_pairs:
+
+                continue
+
+            # Highest liquidity pair is used.
+            valid_pairs.sort(
+                key=lambda item: item[1],
+                reverse=True
+            )
+
+            return valid_pairs[0][0]
+
+        except Exception as error:
+
+            print(
+                "⚠️ DexScreener request failed: "
+                f"{type(error).__name__}: {error}"
+            )
+
+    return None
+
+
+async def fetch_live_market_cap(
+    contract,
+    chain_symbol=None
+):
+
+    return await asyncio.to_thread(
+        fetch_dex_market_cap_sync,
+        contract,
+        chain_symbol
+    )
+
+
+# =========================================================
+# SAVE TRACKING METADATA
+# =========================================================
+
+def save_tracking_metadata(
+    call_id,
+    contract,
+    chain,
+    call_mc
+):
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE calls
+        SET contract = ?,
+            chain = ?,
+            ath_mc = ?,
+            last_milestone = 1
+        WHERE id = ?
+    """, (
+        contract,
+        chain,
+        call_mc or 0,
+        call_id,
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+# =========================================================
+# GET TRACKING CALLS
+# =========================================================
+
+def get_tracking_calls():
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+
+        cursor.execute("""
+            SELECT
+                id,
+                kol_username,
+                project_name,
+                kol_link,
+                project_link,
+                original_call_link,
+                call_mc,
+                current_mc,
+                multiplier,
+                call_time,
+                status,
+                created_at,
+                contract,
+                chain,
+                ath_mc,
+                last_milestone
+            FROM calls
+            WHERE contract IS NOT NULL
+              AND contract != ''
+              AND call_mc > 0
+        """)
+
+        rows = cursor.fetchall()
+
+    except Exception as error:
+
+        print(
+            "❌ Could not load tracking calls: "
+            f"{type(error).__name__}: {error}"
+        )
+
+        rows = []
+
+    finally:
+
+        conn.close()
+
+    return rows
+
+
+# =========================================================
+# MILESTONE CALCULATION
+# =========================================================
+
+def get_pump_milestone(
+    multiplier
+):
+
+    if multiplier is None:
+
+        return 1
+
+    try:
+
+        multiplier = float(
+            multiplier
+        )
+
+    except Exception:
+
+        return 1
+
+    if multiplier < 2:
+
+        return 1
+
+    # 2.00x -> 2
+    # 2.99x -> 2
+    # 3.00x -> 3
+    # 1000x -> 1000
+    return int(
+        multiplier
+    )
+
+
+# =========================================================
+# PUMP ALERT
+# =========================================================
+
+async def send_pump_alert(
+    context,
+    call_id,
+    kol_username,
+    project_name,
+    call_mc,
+    current_mc,
+    multiplier,
+    milestone,
+    original_call_link,
+    kol_link,
+    contract
+):
+
+    safe_kol = html.escape(
+        kol_username or "@KOL"
+    )
+
+    safe_project = html.escape(
+        project_name or "$TOKEN"
+    )
+
+    safe_contract = html.escape(
+        contract or "N/A"
+    )
+
+    call_mc_text = format_market_cap(
+        call_mc
+    )
+
+    current_mc_text = format_market_cap(
+        current_mc
+    )
+
+    alert_text = (
+
+        f"🚀 <b>{milestone}X PUMP HIT!</b>\n\n"
+
+        f"🔮 <b>{safe_project}</b>\n"
+
+        f"👤 KOL: "
+        f"<a href=\"{kol_link}\">"
+        f"{safe_kol}"
+        f"</a>\n\n"
+
+        f"💰 Call MC: "
+        f"{call_mc_text}\n"
+
+        f"📈 Current MC: "
+        f"{current_mc_text}\n"
+
+        f"🚀 Performance: "
+        f"<b>{multiplier:.2f}X</b>\n\n"
+
+        f"CA: <code>"
+        f"{safe_contract}"
+        f"</code>\n\n"
+
+        f"🔎 <a href=\"{original_call_link}\">"
+        f"CALL"
+        f"</a>    "
+
+        f"👤 <a href=\"{kol_link}\">"
+        f"KOL"
+        f"</a>    "
+
+        f"🤖 <a href=\"{BOT_LINK}\">"
+        f"BOT"
+        f"</a>"
+    )
+
+    try:
+
+        await context.bot.send_message(
+
+            chat_id=LIVE_CHANNEL,
+
+            text=alert_text,
+
+            parse_mode="HTML",
+
+            disable_web_page_preview=True,
+        )
+
+        print(
+            f"🚀 {milestone}X ALERT SENT "
+            f"for call #{call_id}"
+        )
+
+        return True
+
+    except Exception as error:
+
+        print(
+            f"❌ Could not send {milestone}X alert "
+            f"for call #{call_id}: "
+            f"{type(error).__name__}: {error}"
+        )
+
+        return False
+
+
+# =========================================================
+# UPDATE ONE CALL
+# =========================================================
+
+async def update_one_tracked_call(
+    context,
+    row
+):
+
+    (
+        call_id,
+        kol_username,
+        project_name,
+        kol_link,
+        project_link,
+        original_call_link,
+        call_mc,
+        old_current_mc,
+        old_multiplier,
+        call_time,
+        status,
+        created_at,
+        contract,
+        chain,
+        old_ath_mc,
+        old_last_milestone,
+    ) = row
+
+    if not contract:
+
+        return
+
+    if not call_mc:
+
+        return
+
+    try:
+
+        call_mc = float(
+            call_mc
+        )
+
+    except Exception:
+
+        return
+
+    if call_mc <= 0:
+
+        return
+
+    current_mc = await fetch_live_market_cap(
+        contract,
+        chain
+    )
+
+    if current_mc is None:
+
+        print(
+            f"⚠️ No live MC found "
+            f"for call #{call_id}"
+        )
+
+        return
+
+    try:
+
+        current_mc = float(
+            current_mc
+        )
+
+    except Exception:
+
+        return
+
+    if current_mc <= 0:
+
+        return
+
+    multiplier = (
+        current_mc / call_mc
+    )
+
+    try:
+
+        old_ath_mc = float(
+            old_ath_mc or 0
+        )
+
+    except Exception:
+
+        old_ath_mc = 0
+
+    new_ath_mc = max(
+        old_ath_mc,
+        current_mc
+    )
+
+    milestone = get_pump_milestone(
+        multiplier
+    )
+
+    try:
+
+        old_last_milestone = int(
+            old_last_milestone or 1
+        )
+
+    except Exception:
+
+        old_last_milestone = 1
+
+    # -----------------------------------------------------
+    # IMPORTANT:
+    #
+    # We NEVER reduce the saved pump milestone.
+    #
+    # If token reaches 5X and later falls to 2X,
+    # last_milestone remains 5.
+    #
+    # No dump alert is ever sent.
+    # -----------------------------------------------------
+
+    new_last_milestone = max(
+        old_last_milestone,
+        milestone
+    )
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE calls
+        SET current_mc = ?,
+            multiplier = ?,
+            ath_mc = ?,
+            last_milestone = ?
+        WHERE id = ?
+    """, (
+        current_mc,
+        multiplier,
+        new_ath_mc,
+        new_last_milestone,
+        call_id,
+    ))
+
+    conn.commit()
+    conn.close()
+
+    print(
+        f"📈 CALL #{call_id} | "
+        f"{format_market_cap(call_mc)} → "
+        f"{format_market_cap(current_mc)} | "
+        f"{multiplier:.2f}X | "
+        f"ATH {format_market_cap(new_ath_mc)}"
+    )
+
+    # -----------------------------------------------------
+    # PUMP ALERT
+    #
+    # Only send when a NEW whole-number X milestone
+    # has been reached.
+    #
+    # 1X -> no alert
+    # 2X -> alert
+    # 3X -> alert
+    # ...
+    # 1000X -> alert
+    #
+    # No dump alerts.
+    # -----------------------------------------------------
+
+    if (
+        milestone >= 2
+        and milestone > old_last_milestone
+    ):
+
+        await send_pump_alert(
+
+            context=context,
+
+            call_id=call_id,
+
+            kol_username=kol_username,
+
+            project_name=project_name,
+
+            call_mc=call_mc,
+
+            current_mc=current_mc,
+
+            multiplier=multiplier,
+
+            milestone=milestone,
+
+            original_call_link=(
+                original_call_link
+            ),
+
+            kol_link=kol_link,
+
+            contract=contract,
+        )
+
+
+# =========================================================
+# BACKGROUND LIVE MC TRACKER
+# =========================================================
+
+async def live_mc_tracker(
+    application
+):
+
+    print(
+        "🚀 LIVE MC TRACKER STARTED"
+    )
+
+    while True:
+
+        try:
+
+            rows = get_tracking_calls()
+
+            if rows:
+
+                print(
+                    f"🔄 Tracking "
+                    f"{len(rows)} call(s)..."
+                )
+
+            for row in rows:
+
+                try:
+
+                    await update_one_tracked_call(
+                        application,
+                        row
+                    )
+
+                except Exception as error:
+
+                    print(
+                        "❌ Individual tracker error: "
+                        f"{type(error).__name__}: "
+                        f"{error}"
+                    )
+
+                # Small delay between tokens.
+                await asyncio.sleep(
+                    0.25
+                )
+
+        except Exception as error:
+
+            print(
+                "❌ Live tracker loop error: "
+                f"{type(error).__name__}: "
+                f"{error}"
+            )
+
+        await asyncio.sleep(
+            TRACK_INTERVAL_SECONDS
+        )
+
+
+# =========================================================
+# APPLICATION POST INIT
+# =========================================================
+
+async def post_init(
+    application
+):
+
+    application.create_task(
+        live_mc_tracker(
+            application
+        )
+    )
+
+    print(
+        "✅ Background MC tracker launched."
+    )
 
 
 # =========================================================
@@ -1192,7 +1872,6 @@ def is_verified_channel(channel):
 async def show_live_calls(query):
 
     calls = get_live_calls()
-
 
     if not calls:
 
@@ -1213,11 +1892,9 @@ async def show_live_calls(query):
 
         return
 
-
     text = (
         "🔥 LIVE CALLS\n\n"
     )
-
 
     for call in calls[:10]:
 
@@ -1237,6 +1914,15 @@ async def show_live_calls(query):
             created_at,
         ) = call
 
+        if multiplier is not None:
+
+            multiplier_text = (
+                f"{multiplier:.2f}x"
+            )
+
+        else:
+
+            multiplier_text = "N/A"
 
         text += (
 
@@ -1251,17 +1937,10 @@ async def show_live_calls(query):
             f"{format_market_cap(current_mc)}\n"
 
             f"🚀 Multiplier: "
-            f"{multiplier:.2f}x\n"
-            if multiplier is not None
-            else
-            f"🚀 Multiplier: N/A\n"
-        )
+            f"{multiplier_text}\n"
 
-
-        text += (
             f"⏱️ {call_time or 'N/A'}\n\n"
         )
-
 
         if original_call_link:
 
@@ -1270,14 +1949,12 @@ async def show_live_calls(query):
                 f"{original_call_link}\n"
             )
 
-
         if kol_link:
 
             text += (
                 f"💍 KOL: "
                 f"{kol_link}\n"
             )
-
 
         if project_link:
 
@@ -1286,9 +1963,7 @@ async def show_live_calls(query):
                 f"{project_link}\n"
             )
 
-
         text += "\n"
-
 
     await query.edit_message_text(
 
@@ -1308,14 +1983,13 @@ async def show_live_calls(query):
 
 
 # =========================================================
-# KOL LEADERBOARD DATABASE QUERY
+# KOL LEADERBOARD
 # =========================================================
 
 def get_kol_leaderboard():
 
     conn = get_connection()
     cursor = conn.cursor()
-
 
     cursor.execute("""
         SELECT
@@ -1346,7 +2020,6 @@ def get_kol_leaderboard():
         LIMIT 10
     """)
 
-
     results = cursor.fetchall()
 
     conn.close()
@@ -1355,7 +2028,7 @@ def get_kol_leaderboard():
 
 
 # =========================================================
-# SHOW KOL LEADERBOARD
+# SHOW LEADERBOARD
 # =========================================================
 
 async def show_kol_leaderboard(query):
@@ -1363,7 +2036,6 @@ async def show_kol_leaderboard(query):
     leaderboard = (
         get_kol_leaderboard()
     )
-
 
     if not leaderboard:
 
@@ -1388,18 +2060,15 @@ async def show_kol_leaderboard(query):
 
         return
 
-
     text = (
         "📊 <b>KOL LEADERBOARD</b>\n\n"
     )
-
 
     medals = [
         "🥇",
         "🥈",
         "🥉"
     ]
-
 
     for index, row in enumerate(
         leaderboard
@@ -1419,7 +2088,6 @@ async def show_kol_leaderboard(query):
             row[3] or 0
         )
 
-
         if index < 3:
 
             rank = medals[index]
@@ -1430,17 +2098,14 @@ async def show_kol_leaderboard(query):
                 f"<b>#{index + 1}</b>"
             )
 
-
         channel_link = (
             f"https://t.me/"
             f"{channel_username.lstrip('@')}"
         )
 
-
         safe_channel = html.escape(
             "@" + channel_username.lstrip("@")
         )
-
 
         text += (
 
@@ -1459,12 +2124,10 @@ async def show_kol_leaderboard(query):
             f"{best_multiplier:.2f}x\n\n"
         )
 
-
     text += (
         "📌 Rankings are based on tracked "
         "calls after KOL verification."
     )
-
 
     await query.edit_message_text(
 
@@ -1528,7 +2191,6 @@ async def show_kol_results(
         channel
     )
 
-
     if not verified:
 
         await update.message.reply_text(
@@ -1546,15 +2208,12 @@ async def show_kol_results(
 
         return
 
-
     verified_at = verified[3]
-
 
     calls = get_calls_for_kol_after_verification(
         channel,
         verified_at
     )
-
 
     if not calls:
 
@@ -1573,7 +2232,6 @@ async def show_kol_results(
 
         return
 
-
     text = (
 
         "🔎 KOL RESULTS\n\n"
@@ -1582,7 +2240,6 @@ async def show_kol_results(
 
         "🟢 Status: Verified\n\n"
     )
-
 
     for call in calls[:10]:
 
@@ -1602,6 +2259,15 @@ async def show_kol_results(
             created_at,
         ) = call
 
+        if multiplier is not None:
+
+            multiplier_text = (
+                f"{multiplier:.2f}x"
+            )
+
+        else:
+
+            multiplier_text = "N/A"
 
         text += (
 
@@ -1614,17 +2280,10 @@ async def show_kol_results(
             f"{format_market_cap(current_mc)}\n"
 
             f"🚀 Multiplier: "
-            f"{multiplier:.2f}x\n"
-            if multiplier is not None
-            else
-            f"🚀 Multiplier: N/A\n"
-        )
+            f"{multiplier_text}\n"
 
-
-        text += (
             f"⏱️ {call_time or 'N/A'}\n"
         )
-
 
         if original_call_link:
 
@@ -1633,7 +2292,6 @@ async def show_kol_results(
                 f"{original_call_link}\n"
             )
 
-
         if project_link:
 
             text += (
@@ -1641,9 +2299,7 @@ async def show_kol_results(
                 f"{project_link}\n"
             )
 
-
         text += "\n"
-
 
     await update.message.reply_text(
 
@@ -1656,21 +2312,7 @@ async def show_kol_results(
 
 
 # =========================================================
-# AUTOMATIC CHANNEL CALL DETECTOR
-#
-# ALL VERIFIED / APPROVED CHANNELS
-#
-# Supported:
-#
-# $TOKEN
-# CA:
-# Contract:
-# Direct 0x...
-# DexScreener URL
-# Missing MC
-# X/Twitter link
-# Multiple chains
-#
+# CHANNEL POST DETECTOR
 # =========================================================
 
 async def channel_post_handler(
@@ -1680,14 +2322,11 @@ async def channel_post_handler(
 
     message = update.channel_post
 
-
     if not message:
 
         return
 
-
     chat = message.chat
-
 
     if not chat.username:
 
@@ -1698,11 +2337,9 @@ async def channel_post_handler(
 
         return
 
-
     channel = normalize_channel(
         chat.username
     )
-
 
     print(
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -1713,20 +2350,11 @@ async def channel_post_handler(
         f"{channel}"
     )
 
-
-    # =====================================================
-    # TEXT OR CAPTION
-    # =====================================================
-
     text = (
-
         message.text
-
         or message.caption
-
         or ""
     )
-
 
     if not text:
 
@@ -1737,7 +2365,6 @@ async def channel_post_handler(
 
         return
 
-
     print(
         "📝 Post text received:"
     )
@@ -1746,10 +2373,9 @@ async def channel_post_handler(
         text[:1500]
     )
 
-
-    # =====================================================
+    # -----------------------------------------------------
     # VERIFIED CHANNEL ONLY
-    # =====================================================
+    # -----------------------------------------------------
 
     if not is_verified_channel(
         channel
@@ -1762,21 +2388,18 @@ async def channel_post_handler(
 
         return
 
-
     print(
         f"✅ VERIFIED KOL DETECTED: "
         f"{channel}"
     )
 
-
-    # =====================================================
-    # CONTRACT / CA
-    # =====================================================
+    # -----------------------------------------------------
+    # CONTRACT
+    # -----------------------------------------------------
 
     contract = parse_contract(
         text
     )
-
 
     if not contract:
 
@@ -1787,98 +2410,125 @@ async def channel_post_handler(
 
         return
 
-
     print(
         f"🔗 CA/Contract detected: "
         f"{contract}"
     )
 
-
-    # =====================================================
-    # MARKET CAP
-    #
-    # OPTIONAL
-    # =====================================================
-
-    call_mc = parse_market_cap(
-        text
-    )
-
-
-    if call_mc is None:
-
-        print(
-            "ℹ️ Market Cap not found."
-        )
-
-        print(
-            "➡️ Continuing with MC = N/A."
-        )
-
-    else:
-
-        print(
-            f"💰 Market Cap detected: "
-            f"${call_mc:,.0f}"
-        )
-
-
-    # =====================================================
-    # PROJECT NAME
-    # =====================================================
-
-    project_name = parse_project_name(
-        text,
-        contract
-    )
-
-
-    print(
-        f"🪙 Project detected: "
-        f"{project_name}"
-    )
-
-
-    # =====================================================
-    # TOKEN SYMBOL
-    # =====================================================
-
-    token_symbol = detect_token_symbol(
-        text,
-        project_name
-    )
-
-
-    print(
-        f"🔮 Token detected: "
-        f"{token_symbol}"
-    )
-
-
-    # =====================================================
+    # -----------------------------------------------------
     # CHAIN
-    # =====================================================
+    # -----------------------------------------------------
 
     chain_symbol = detect_chain_symbol(
         text,
         contract
     )
 
-
     print(
         f"⛓️ Chain detected: "
         f"{chain_symbol}"
     )
 
+    # -----------------------------------------------------
+    # MC WRITTEN IN POST
+    # -----------------------------------------------------
 
-    # =====================================================
+    parsed_mc = parse_market_cap(
+        text
+    )
+
+    # -----------------------------------------------------
+    # IMPORTANT:
+    #
+    # FIRST TRY LIVE DEXSCREENER MC.
+    #
+    # This becomes the Call MC.
+    #
+    # If API is temporarily unavailable,
+    # use MC written in promotion as fallback.
+    # -----------------------------------------------------
+
+    print(
+        "📡 Fetching promotion-time live MC..."
+    )
+
+    live_call_mc = await fetch_live_market_cap(
+        contract,
+        chain_symbol
+    )
+
+    if live_call_mc is not None:
+
+        call_mc = live_call_mc
+
+        print(
+            "💰 LIVE PROMOTION MC: "
+            f"{format_market_cap(call_mc)}"
+        )
+
+    else:
+
+        call_mc = parsed_mc
+
+        if call_mc is not None:
+
+            print(
+                "⚠️ DexScreener live MC unavailable."
+            )
+
+            print(
+                "💰 Using MC written in post: "
+                f"{format_market_cap(call_mc)}"
+            )
+
+        else:
+
+            print(
+                "⚠️ No live MC and no post MC."
+            )
+
+            print(
+                "⏭️ Call will not be tracked "
+                "until a valid Call MC exists."
+            )
+
+            return
+
+    # -----------------------------------------------------
+    # PROJECT
+    # -----------------------------------------------------
+
+    project_name = parse_project_name(
+        text,
+        contract
+    )
+
+    print(
+        f"🪙 Project: "
+        f"{project_name}"
+    )
+
+    # -----------------------------------------------------
+    # TOKEN
+    # -----------------------------------------------------
+
+    token_symbol = detect_token_symbol(
+        text,
+        project_name
+    )
+
+    print(
+        f"🔮 Token: "
+        f"{token_symbol}"
+    )
+
+    # -----------------------------------------------------
     # LINKS
-    # =====================================================
+    # -----------------------------------------------------
 
     links = parse_project_links(
         text
     )
-
 
     project_link = links[
         "project_link"
@@ -1888,11 +2538,6 @@ async def channel_post_handler(
         "dex_link"
     ]
 
-    x_link = links[
-        "x_link"
-    ]
-
-
     if dex_link:
 
         print(
@@ -1900,26 +2545,9 @@ async def channel_post_handler(
             f"{dex_link}"
         )
 
-
-    if x_link:
-
-        print(
-            f"𝕏 X/Twitter: "
-            f"{x_link}"
-        )
-
-
-    if project_link:
-
-        print(
-            f"🔗 Project link: "
-            f"{project_link}"
-        )
-
-
-    # =====================================================
+    # -----------------------------------------------------
     # TELEGRAM LINKS
-    # =====================================================
+    # -----------------------------------------------------
 
     original_call_link = (
 
@@ -1928,36 +2556,25 @@ async def channel_post_handler(
         f"{message.message_id}"
     )
 
-
     kol_link = (
 
         f"https://t.me/"
         f"{chat.username}"
     )
 
-
-    # =====================================================
-    # DATABASE MC VALUE
-    #
-    # If database column is NOT NULL,
-    # store 0 internally.
-    #
-    # UI will still show N/A.
-    # =====================================================
+    # -----------------------------------------------------
+    # DATABASE MC
+    # -----------------------------------------------------
 
     database_mc = (
-
         call_mc
-
         if call_mc is not None
-
         else 0
     )
 
-
-    # =====================================================
+    # -----------------------------------------------------
     # SAVE CALL
-    # =====================================================
+    # -----------------------------------------------------
 
     try:
 
@@ -1979,7 +2596,7 @@ async def channel_post_handler(
 
             current_mc=database_mc,
 
-            multiplier=1,
+            multiplier=1.0,
 
             call_time=(
                 datetime.utcnow()
@@ -1993,52 +2610,13 @@ async def channel_post_handler(
             status="live",
         )
 
-
         print(
             "✅ CALL DETECTED AND SAVED"
         )
 
-
         print(
-            f"   KOL: {channel}"
+            f"   Call ID: {call_id}"
         )
-
-
-        print(
-            f"   Project: "
-            f"{project_name}"
-        )
-
-
-        print(
-            f"   Token: "
-            f"{token_symbol}"
-        )
-
-
-        print(
-            f"   Contract: "
-            f"{contract}"
-        )
-
-
-        print(
-            f"   Chain: "
-            f"{chain_symbol}"
-        )
-
-
-        print(
-            f"   Call MC: "
-            f"{format_market_cap(call_mc)}"
-        )
-
-
-        print(
-            f"   Call ID: "
-            f"{call_id}"
-        )
-
 
     except Exception as error:
 
@@ -2049,10 +2627,33 @@ async def channel_post_handler(
 
         return
 
+    # -----------------------------------------------------
+    # SAVE CONTRACT / CHAIN / ATH
+    # -----------------------------------------------------
 
-    # =====================================================
-    # SEND ALERT TO KOLPULSE LIVE
-    # =====================================================
+    try:
+
+        save_tracking_metadata(
+            call_id=call_id,
+            contract=contract,
+            chain=chain_symbol,
+            call_mc=database_mc,
+        )
+
+        print(
+            "💾 Tracking metadata saved."
+        )
+
+    except Exception as error:
+
+        print(
+            "❌ Could not save tracking metadata: "
+            f"{type(error).__name__}: {error}"
+        )
+
+    # -----------------------------------------------------
+    # SEND INITIAL CALL ALERT
+    # -----------------------------------------------------
 
     try:
 
@@ -2060,26 +2661,21 @@ async def channel_post_handler(
             channel
         )
 
-
         safe_token = html.escape(
             token_symbol
         )
-
 
         safe_contract = html.escape(
             contract
         )
 
-
         safe_chain = html.escape(
             chain_symbol
         )
 
-
         mc_display = format_market_cap(
             call_mc
         )
-
 
         alert_text = (
 
@@ -2090,18 +2686,17 @@ async def channel_post_handler(
             f"🔮 Token Symbol   🔮 "
             f"{safe_token}\n"
 
-            f"🔮 Current MC     🔮 "
+            f"🔮 Call MC        🔮 "
             f"{mc_display}\n"
 
             f"🔮 Chain Symbol   🔮 "
             f"{safe_chain}\n\n"
 
             "We've started tracking it and "
-            "will continue to send performance "
-            "alerts as the token progresses. "
-            "Stay tuned!\n\n"
+            "will send performance alerts "
+            "when new X milestones are reached.\n\n"
 
-            f"Ca: <code>"
+            f"CA: <code>"
             f"{safe_contract}"
             f"</code>\n\n"
 
@@ -2115,7 +2710,6 @@ async def channel_post_handler(
             f'BOT</a>'
         )
 
-
         await context.bot.send_message(
 
             chat_id=LIVE_CHANNEL,
@@ -2127,21 +2721,17 @@ async def channel_post_handler(
             disable_web_page_preview=True,
         )
 
-
         print(
-            f"✅ Alert sent to "
+            f"✅ Initial alert sent to "
             f"{LIVE_CHANNEL}"
         )
-
 
     except Exception as error:
 
         print(
-            "❌ Could not send alert to "
-            f"{LIVE_CHANNEL}: "
+            "❌ Could not send initial alert: "
             f"{type(error).__name__}: {error}"
         )
-
 
     print(
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -2161,10 +2751,9 @@ async def button_handler(
 
     data = query.data
 
-
-    # =====================================================
+    # -----------------------------------------------------
     # LEADERBOARD
-    # =====================================================
+    # -----------------------------------------------------
 
     if data == "leaderboard":
 
@@ -2183,7 +2772,6 @@ async def button_handler(
                 f"{type(error).__name__}: {error}"
             )
 
-
             await query.edit_message_text(
 
                 "⚠️ KOL Leaderboard "
@@ -2201,30 +2789,25 @@ async def button_handler(
 
         return
 
-
-    # =====================================================
-    # TRACK MY CHANNEL
-    # =====================================================
+    # -----------------------------------------------------
+    # TRACK CHANNEL
+    # -----------------------------------------------------
 
     if data == "track_channel":
 
         await query.answer()
 
-
         context.user_data[
             "waiting_for_channel"
         ] = False
-
 
         context.user_data[
             "waiting_for_kol_search"
         ] = False
 
-
         context.user_data[
             "channel_admin_check"
         ] = False
-
 
         await query.edit_message_text(
 
@@ -2264,30 +2847,25 @@ async def button_handler(
 
         return
 
-
-    # =====================================================
-    # I ADDED BOT AS ADMIN
-    # =====================================================
+    # -----------------------------------------------------
+    # BOT ADMIN CHECK
+    # -----------------------------------------------------
 
     if data == "check_bot_admin":
 
         await query.answer()
 
-
         context.user_data[
             "waiting_for_channel"
         ] = True
-
 
         context.user_data[
             "waiting_for_kol_search"
         ] = False
 
-
         context.user_data[
             "channel_admin_check"
         ] = True
-
 
         await query.edit_message_text(
 
@@ -2320,25 +2898,21 @@ async def button_handler(
 
         return
 
-
-    # =====================================================
+    # -----------------------------------------------------
     # SEARCH KOL
-    # =====================================================
+    # -----------------------------------------------------
 
     if data == "search_kol":
 
         await query.answer()
 
-
         context.user_data[
             "waiting_for_channel"
         ] = False
 
-
         context.user_data[
             "waiting_for_kol_search"
         ] = True
-
 
         await search_kol(
             query
@@ -2346,30 +2920,25 @@ async def button_handler(
 
         return
 
-
-    # =====================================================
-    # BACK TO MENU
-    # =====================================================
+    # -----------------------------------------------------
+    # BACK
+    # -----------------------------------------------------
 
     if data == "back_menu":
 
         await query.answer()
 
-
         context.user_data[
             "waiting_for_channel"
         ] = False
-
 
         context.user_data[
             "waiting_for_kol_search"
         ] = False
 
-
         context.user_data[
             "channel_admin_check"
         ] = False
-
 
         await query.edit_message_text(
 
@@ -2381,10 +2950,9 @@ async def button_handler(
 
         return
 
-
-    # =====================================================
-    # ACCEPT REQUEST
-    # =====================================================
+    # -----------------------------------------------------
+    # ACCEPT
+    # -----------------------------------------------------
 
     if data.startswith(
         "accept:"
@@ -2392,17 +2960,14 @@ async def button_handler(
 
         await query.answer()
 
-
         parts = data.split(
             ":",
             2
         )
 
-
         if len(parts) != 3:
 
             return
-
 
         try:
 
@@ -2414,11 +2979,9 @@ async def button_handler(
 
             return
 
-
         channel = normalize_channel(
             parts[2]
         )
-
 
         if str(
             query.message.chat.id
@@ -2431,11 +2994,6 @@ async def button_handler(
 
             return
 
-
-        # -------------------------------------------------
-        # ADMIN CHECK
-        # -------------------------------------------------
-
         try:
 
             member = (
@@ -2444,7 +3002,6 @@ async def button_handler(
                     user_id=query.from_user.id,
                 )
             )
-
 
             if member.status not in [
                 "administrator",
@@ -2458,13 +3015,11 @@ async def button_handler(
 
                 return
 
-
         except Exception as error:
 
             print(
                 f"Admin check error: {error}"
             )
-
 
             await query.answer(
                 "Could not verify admin.",
@@ -2472,11 +3027,6 @@ async def button_handler(
             )
 
             return
-
-
-        # -------------------------------------------------
-        # ALREADY VERIFIED
-        # -------------------------------------------------
 
         try:
 
@@ -2486,14 +3036,12 @@ async def button_handler(
                 )
             )
 
-
             if existing_verified:
 
                 update_request_status(
                     channel,
                     "approved"
                 )
-
 
                 await query.edit_message_text(
 
@@ -2506,18 +3054,12 @@ async def button_handler(
 
                 return
 
-
         except Exception as error:
 
             print(
                 "Existing verification check error: "
                 f"{error}"
             )
-
-
-        # -------------------------------------------------
-        # SAVE VERIFIED CHANNEL
-        # -------------------------------------------------
 
         try:
 
@@ -2528,18 +3070,15 @@ async def button_handler(
                 )
             )
 
-
             update_request_status(
                 channel,
                 "approved"
             )
 
-
             print(
                 "✅ Verified channel saved: "
                 f"{channel} at {verified_at}"
             )
-
 
         except Exception as error:
 
@@ -2548,18 +3087,12 @@ async def button_handler(
                 f"{type(error).__name__}: {error}"
             )
 
-
             await query.answer(
                 "Could not save verification.",
                 show_alert=True
             )
 
             return
-
-
-        # -------------------------------------------------
-        # NOTIFY USER
-        # -------------------------------------------------
 
         try:
 
@@ -2581,17 +3114,11 @@ async def button_handler(
                 ),
             )
 
-
         except Exception as error:
 
             print(
                 f"Could not notify user: {error}"
             )
-
-
-        # -------------------------------------------------
-        # ADMIN NAME
-        # -------------------------------------------------
 
         if query.from_user.username:
 
@@ -2605,7 +3132,6 @@ async def button_handler(
                 query.from_user.full_name
             )
 
-
         approved_text = (
 
             "📡 CHANNEL TRACKING REQUEST\n\n"
@@ -2616,7 +3142,6 @@ async def button_handler(
 
             f"👮 Approved by: {admin_name}"
         )
-
 
         try:
 
@@ -2633,10 +3158,9 @@ async def button_handler(
 
         return
 
-
-    # =====================================================
-    # REJECT REQUEST
-    # =====================================================
+    # -----------------------------------------------------
+    # REJECT
+    # -----------------------------------------------------
 
     if data.startswith(
         "reject:"
@@ -2644,17 +3168,14 @@ async def button_handler(
 
         await query.answer()
 
-
         parts = data.split(
             ":",
             2
         )
 
-
         if len(parts) != 3:
 
             return
-
 
         try:
 
@@ -2666,11 +3187,9 @@ async def button_handler(
 
             return
 
-
         channel = normalize_channel(
             parts[2]
         )
-
 
         if str(
             query.message.chat.id
@@ -2683,11 +3202,6 @@ async def button_handler(
 
             return
 
-
-        # -------------------------------------------------
-        # ADMIN CHECK
-        # -------------------------------------------------
-
         try:
 
             member = (
@@ -2696,7 +3210,6 @@ async def button_handler(
                     user_id=query.from_user.id,
                 )
             )
-
 
             if member.status not in [
                 "administrator",
@@ -2710,13 +3223,11 @@ async def button_handler(
 
                 return
 
-
         except Exception as error:
 
             print(
                 f"Admin check error: {error}"
             )
-
 
             await query.answer(
                 "Could not verify admin.",
@@ -2724,11 +3235,6 @@ async def button_handler(
             )
 
             return
-
-
-        # -------------------------------------------------
-        # UPDATE STATUS
-        # -------------------------------------------------
 
         try:
 
@@ -2743,11 +3249,6 @@ async def button_handler(
                 "Could not update rejected status: "
                 f"{error}"
             )
-
-
-        # -------------------------------------------------
-        # NOTIFY USER
-        # -------------------------------------------------
 
         try:
 
@@ -2769,13 +3270,11 @@ async def button_handler(
                 ),
             )
 
-
         except Exception as error:
 
             print(
                 f"Could not notify user: {error}"
             )
-
 
         rejected_text = (
 
@@ -2785,7 +3284,6 @@ async def button_handler(
 
             "🔴 STATUS: REJECTED"
         )
-
 
         try:
 
@@ -2802,15 +3300,13 @@ async def button_handler(
 
         return
 
-
-    # =====================================================
+    # -----------------------------------------------------
     # TOP KOLS
-    # =====================================================
+    # -----------------------------------------------------
 
     if data == "top_kols":
 
         await query.answer()
-
 
         await query.edit_message_text(
 
@@ -2836,15 +3332,13 @@ async def button_handler(
 
         return
 
-
-    # =====================================================
+    # -----------------------------------------------------
     # SUPPORT
-    # =====================================================
+    # -----------------------------------------------------
 
     if data == "support":
 
         await query.answer()
-
 
         await query.edit_message_text(
 
@@ -2870,13 +3364,7 @@ async def button_handler(
 
         return
 
-
-    # =====================================================
-    # UNKNOWN
-    # =====================================================
-
     await query.answer()
-
 
     await query.edit_message_text(
 
@@ -2899,13 +3387,11 @@ async def verify_bot_is_channel_admin(
         channel
     )
 
-
     try:
 
         chat = await context.bot.get_chat(
             channel
         )
-
 
         bot_member = (
             await context.bot.get_chat_member(
@@ -2914,12 +3400,10 @@ async def verify_bot_is_channel_admin(
             )
         )
 
-
         print(
             f"🔐 Bot status in {channel}: "
             f"{bot_member.status}"
         )
-
 
         if bot_member.status in [
             "administrator",
@@ -2932,13 +3416,11 @@ async def verify_bot_is_channel_admin(
                 bot_member.status
             )
 
-
         return (
             False,
             chat,
             bot_member.status
         )
-
 
     except Exception as error:
 
@@ -2947,7 +3429,6 @@ async def verify_bot_is_channel_admin(
             f"for {channel}: "
             f"{type(error).__name__}: {error}"
         )
-
 
         return (
             False,
@@ -2969,20 +3450,17 @@ async def channel_message(
 
         return
 
-
     if not update.message.text:
 
         return
-
 
     message_text = (
         update.message.text.strip()
     )
 
-
-    # =====================================================
+    # -----------------------------------------------------
     # SEARCH KOL
-    # =====================================================
+    # -----------------------------------------------------
 
     if context.user_data.get(
         "waiting_for_kol_search"
@@ -2992,11 +3470,9 @@ async def channel_message(
             message_text
         )
 
-
         context.user_data[
             "waiting_for_kol_search"
         ] = False
-
 
         await show_kol_results(
             update,
@@ -3005,10 +3481,9 @@ async def channel_message(
 
         return
 
-
-    # =====================================================
-    # TRACK MY CHANNEL
-    # =====================================================
+    # -----------------------------------------------------
+    # TRACK CHANNEL
+    # -----------------------------------------------------
 
     if not context.user_data.get(
         "waiting_for_channel"
@@ -3016,26 +3491,22 @@ async def channel_message(
 
         return
 
-
     channel = normalize_channel(
         message_text
     )
-
 
     context.user_data[
         "waiting_for_channel"
     ] = False
 
-
-    # =====================================================
-    # VERIFY BOT ADMIN
-    # =====================================================
+    # -----------------------------------------------------
+    # VERIFY ADMIN
+    # -----------------------------------------------------
 
     print(
         f"🔐 Checking bot Admin access "
         f"in {channel}..."
     )
-
 
     (
         bot_is_admin,
@@ -3046,13 +3517,11 @@ async def channel_message(
         channel
     )
 
-
     if not bot_is_admin:
 
         context.user_data[
             "waiting_for_channel"
         ] = True
-
 
         await update.message.reply_text(
 
@@ -3094,20 +3563,14 @@ async def channel_message(
 
         return
 
-
-    # =====================================================
-    # BOT IS ADMIN
-    # =====================================================
-
     print(
         f"✅ KOLPulse bot is Admin in "
         f"{channel}"
     )
 
-
-    # =====================================================
+    # -----------------------------------------------------
     # REQUEST STATUS
-    # =====================================================
+    # -----------------------------------------------------
 
     try:
 
@@ -3115,14 +3578,12 @@ async def channel_message(
             channel
         )
 
-
     except Exception as error:
 
         print(
             "❌ Channel status check failed: "
             f"{type(error).__name__}: {error}"
         )
-
 
         await update.message.reply_text(
 
@@ -3135,10 +3596,9 @@ async def channel_message(
 
         return
 
-
-    # =====================================================
+    # -----------------------------------------------------
     # APPROVED
-    # =====================================================
+    # -----------------------------------------------------
 
     if status == "approved":
 
@@ -3158,10 +3618,9 @@ async def channel_message(
 
         return
 
-
-    # =====================================================
+    # -----------------------------------------------------
     # PENDING
-    # =====================================================
+    # -----------------------------------------------------
 
     if status == "pending":
 
@@ -3181,13 +3640,7 @@ async def channel_message(
 
         return
 
-
-    # =====================================================
-    # USER
-    # =====================================================
-
     user = update.effective_user
-
 
     if user.username:
 
@@ -3201,13 +3654,11 @@ async def channel_message(
             user.full_name
         )
 
-
     user_id = user.id
 
-
-    # =====================================================
+    # -----------------------------------------------------
     # SAVE PENDING
-    # =====================================================
+    # -----------------------------------------------------
 
     try:
 
@@ -3215,7 +3666,6 @@ async def channel_message(
             channel,
             user_id
         )
-
 
         if not created:
 
@@ -3233,14 +3683,12 @@ async def channel_message(
 
             return
 
-
     except Exception as error:
 
         print(
             "❌ Could not save pending request: "
             f"{type(error).__name__}: {error}"
         )
-
 
         await update.message.reply_text(
 
@@ -3254,15 +3702,13 @@ async def channel_message(
 
         return
 
-
     current_time = datetime.now().strftime(
         "%Y-%m-%d %H:%M:%S"
     )
 
-
-    # =====================================================
+    # -----------------------------------------------------
     # ADMIN GROUP NOTIFICATION
-    # =====================================================
+    # -----------------------------------------------------
 
     notification = (
 
@@ -3285,9 +3731,7 @@ async def channel_message(
         "👇 Admin action required:"
     )
 
-
     group_sent = False
-
 
     if GROUP_CHAT_ID:
 
@@ -3296,7 +3740,6 @@ async def channel_message(
             group_chat_id = int(
                 GROUP_CHAT_ID
             )
-
 
             await context.bot.send_message(
 
@@ -3312,15 +3755,12 @@ async def channel_message(
                 disable_web_page_preview=True,
             )
 
-
             group_sent = True
-
 
             print(
                 "✅ Group notification "
                 "sent successfully."
             )
-
 
         except Exception as error:
 
@@ -3329,17 +3769,15 @@ async def channel_message(
                 f"{type(error).__name__}: {error}"
             )
 
-
     else:
 
         print(
             "❌ GROUP_CHAT_ID secret is empty."
         )
 
-
-    # =====================================================
+    # -----------------------------------------------------
     # CONFIRMATION
-    # =====================================================
+    # -----------------------------------------------------
 
     if group_sent:
 
@@ -3359,7 +3797,6 @@ async def channel_message(
             "Please wait for the admin decision."
         )
 
-
     else:
 
         confirmation = (
@@ -3375,7 +3812,6 @@ async def channel_message(
 
             "Please contact support."
         )
-
 
     await update.message.reply_text(
 
@@ -3397,13 +3833,11 @@ def main():
             "BOT_TOKEN is not configured."
         )
 
-
     if not GROUP_CHAT_ID:
 
         raise ValueError(
             "GROUP_CHAT_ID is not configured."
         )
-
 
     # -----------------------------------------------------
     # DATABASE
@@ -3413,65 +3847,55 @@ def main():
 
     ensure_tracking_requests_table()
 
+    ensure_call_tracking_columns()
 
     print(
         "🚀 KOLPulse Bot starting..."
     )
-
 
     print(
         f"📡 Admin Group: "
         f"{GROUP_CHAT_ID}"
     )
 
-
     print(
         "📡 Monitoring: "
         "ALL VERIFIED / APPROVED CHANNELS"
     )
 
-
     print(
         "📡 Raven-only restriction: DISABLED"
     )
-
 
     print(
         f"🤖 Bot: "
         f"{BOT_USERNAME}"
     )
 
-
     print(
         f"📡 Live Destination: "
         f"{LIVE_CHANNEL}"
     )
 
-
     print(
         "🔐 Channel Admin verification enabled."
     )
-
 
     print(
         "🧠 Flexible CA/Contract parser enabled."
     )
 
-
     print(
-        "📈 DexScreener URL parser enabled."
+        "📈 DexScreener live MC tracking enabled."
     )
 
-
     print(
-        "💰 MC optional mode enabled."
+        "🚀 2X → 1000X+ pump milestones enabled."
     )
 
-
     print(
-        "🔗 X/Twitter/Project link detection enabled."
+        "🔴 Dump alerts DISABLED."
     )
-
 
     # -----------------------------------------------------
     # APPLICATION
@@ -3481,13 +3905,13 @@ def main():
         Application
         .builder()
         .token(BOT_TOKEN)
+        .post_init(post_init)
         .build()
     )
 
-
-    # =====================================================
+    # -----------------------------------------------------
     # COMMANDS
-    # =====================================================
+    # -----------------------------------------------------
 
     app.add_handler(
         CommandHandler(
@@ -3496,7 +3920,6 @@ def main():
         )
     )
 
-
     app.add_handler(
         CommandHandler(
             "groupid",
@@ -3504,10 +3927,9 @@ def main():
         )
     )
 
-
-    # =====================================================
+    # -----------------------------------------------------
     # CALLBACK BUTTONS
-    # =====================================================
+    # -----------------------------------------------------
 
     app.add_handler(
         CallbackQueryHandler(
@@ -3515,10 +3937,9 @@ def main():
         )
     )
 
-
-    # =====================================================
+    # -----------------------------------------------------
     # CHANNEL POSTS
-    # =====================================================
+    # -----------------------------------------------------
 
     app.add_handler(
         MessageHandler(
@@ -3527,10 +3948,9 @@ def main():
         )
     )
 
-
-    # =====================================================
+    # -----------------------------------------------------
     # TEXT MESSAGES
-    # =====================================================
+    # -----------------------------------------------------
 
     app.add_handler(
         MessageHandler(
@@ -3539,16 +3959,13 @@ def main():
         )
     )
 
-
     print(
         "✅ KOLPulse Bot is now running..."
     )
 
-
     print(
         "⏳ Polling Telegram..."
     )
-
 
     app.run_polling(
         drop_pending_updates=False
