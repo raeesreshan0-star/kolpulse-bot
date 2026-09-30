@@ -2243,6 +2243,22 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
         )
 
     # =====================================================
+    # VIDEO REQUIRED
+    # =====================================================
+    # KOLPulse only tracks calls that contain an actual
+    # Telegram video/animation attachment.
+    # Text-only calls are ignored completely.
+
+    if not video_file_id:
+
+        print(
+            f"⏭️ Call ignored: no video/animation attached "
+            f"to {channel}"
+        )
+
+        return
+
+    # =====================================================
     # TEXT / CAPTION
     # =====================================================
 
@@ -2255,7 +2271,7 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
     if not text:
 
         print(
-            f"⏭️ Empty post ignored "
+            f"⏭️ Empty video post ignored "
             f"from {channel}"
         )
 
@@ -2660,21 +2676,14 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
 
         else:
 
-            await context.bot.send_message(
-
-                chat_id=LIVE_CHANNEL,
-
-                text=alert_text,
-
-                parse_mode="HTML",
-
-                disable_web_page_preview=True,
-            )
-
+            # Safety fallback: video is mandatory, so a text-only
+            # alert must never be published.
             print(
-                f"✅ Initial text alert sent "
-                f"to {LIVE_CHANNEL}"
+                f"⏭️ Initial alert blocked: "
+                f"no video/animation for {channel}"
             )
+
+            return
 
     except Exception as error:
 
