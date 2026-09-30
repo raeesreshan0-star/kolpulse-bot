@@ -37,6 +37,171 @@ BOT_LINK = "https://t.me/KOLPulse_Live_bot"
 
 
 # =========================================================
+# CHANNEL REQUEST STATUS
+# =========================================================
+
+def normalize_channel(channel):
+    """Return a clean Telegram channel username."""
+    channel = (channel or "").strip()
+
+    if "t.me/" in channel.lower():
+        channel = channel.split("t.me/", 1)[1]
+        channel = channel.split("?", 1)[0]
+        channel = channel.split("/", 1)[0]
+
+    if not channel.startswith("@"):
+        channel = "@" + channel
+
+    return channel
+
+
+def ensure_tracking_requests_table():
+    """
+    Stores Track My Channel requests so the bot can distinguish:
+    PENDING -> APPROVED -> REJECTED.
+
+    This is separate from verified_channels so existing database.py
+    does not need to be changed just to track pending requests.
+    """
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS channel_tracking_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_username TEXT NOT NULL UNIQUE,
+            user_id INTEGER NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+
+
+def get_request_status(channel):
+    """Return pending/approved/rejected/None."""
+    channel = normalize_channel(channel)
+    clean = channel.lstrip("@").lower()
+
+    # Approved channels are determined by verified_channels.
+    try:
+        verified = get_verified_channel(channel)
+
+        if verified:
+            return "approved"
+
+    except Exception as error:
+        print(
+            f"⚠️ get_verified_channel check failed: "
+            f"{type(error).__name__}: {error}"
+        )
+
+    # Pending/rejected state is stored in our request table.
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT status
+        FROM channel_tracking_requests
+        WHERE LOWER(REPLACE(channel_username, '@', '')) = ?
+        ORDER BY id DESC
+        LIMIT 1
+    """, (clean,))
+
+    row = cursor.fetchone()
+    conn.close()
+
+    if not row:
+        return None
+
+    return row[0]
+
+
+def save_pending_request(channel, user_id):
+    """Create or refresh a pending request."""
+    channel = normalize_channel(channel)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    # If a rejected request exists, allow a fresh request.
+    cursor.execute("""
+        SELECT id, status
+        FROM channel_tracking_requests
+        WHERE LOWER(REPLACE(channel_username, '@', '')) = ?
+        ORDER BY id DESC
+        LIMIT 1
+    """, (channel.lstrip("@").lower(),))
+
+    row = cursor.fetchone()
+
+    if row:
+        request_id, status = row
+
+        if status == "pending":
+            conn.close()
+            return False
+
+        cursor.execute("""
+            UPDATE channel_tracking_requests
+            SET user_id = ?,
+                status = 'pending',
+                updated_at = ?
+            WHERE id = ?
+        """, (user_id, now, request_id))
+
+    else:
+        cursor.execute("""
+            INSERT INTO channel_tracking_requests
+            (
+                channel_username,
+                user_id,
+                status,
+                created_at,
+                updated_at
+            )
+            VALUES (?, ?, 'pending', ?, ?)
+        """, (
+            channel,
+            user_id,
+            now,
+            now,
+        ))
+
+    conn.commit()
+    conn.close()
+
+    return True
+
+
+def update_request_status(channel, status):
+    """Update the local request record."""
+    channel = normalize_channel(channel)
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE channel_tracking_requests
+        SET status = ?,
+            updated_at = ?
+        WHERE LOWER(REPLACE(channel_username, '@', '')) = ?
+    """, (
+        status,
+        now,
+        channel.lstrip("@").lower(),
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+# =========================================================
 # MAIN MENU
 # =========================================================
 
@@ -361,9 +526,7 @@ def get_kol_leaderboard():
     conn.close()
 
     return results
-
-
-# =========================================================
+    # =========================================================
 # SHOW KOL LEADERBOARD
 # =========================================================
 
@@ -629,10 +792,6 @@ async def channel_post_handler(
         f"📨 New channel post received from {channel}"
     )
 
-    # =====================================================
-    # GET POST TEXT / CAPTION
-    # =====================================================
-
     text = (
         message.text
         or message.caption
@@ -647,10 +806,6 @@ async def channel_post_handler(
 
         return
 
-    # =====================================================
-    # ONLY TRACK RAVEN FOR NOW
-    # =====================================================
-
     if channel.lower() != RAVEN_CHANNEL.lower():
 
         print(
@@ -659,10 +814,6 @@ async def channel_post_handler(
         )
 
         return
-
-    # =====================================================
-    # CHECK VERIFIED KOL
-    # =====================================================
 
     verified = get_verified_channel(channel)
 
@@ -677,10 +828,6 @@ async def channel_post_handler(
     print(
         f"✅ Verified KOL detected: {channel}"
     )
-
-    # =====================================================
-    # CONTRACT DETECTION
-    # =====================================================
 
     contract = None
 
@@ -702,10 +849,6 @@ async def channel_post_handler(
         )
 
         return
-
-    # =====================================================
-    # MARKET CAP DETECTION
-    # =====================================================
 
     call_mc = None
 
@@ -767,10 +910,6 @@ async def channel_post_handler(
 
         return
 
-    # =====================================================
-    # PROJECT NAME
-    # =====================================================
-
     project_name = None
 
     for line in text.splitlines():
@@ -788,19 +927,11 @@ async def channel_post_handler(
 
         project_name = contract[:12]
 
-    # =====================================================
-    # TOKEN SYMBOL
-    # =====================================================
-
     token_symbol = detect_token_symbol(
         text,
         project_name,
         contract
     )
-
-    # =====================================================
-    # TELEGRAM LINKS
-    # =====================================================
 
     original_call_link = (
         f"https://t.me/"
@@ -812,10 +943,6 @@ async def channel_post_handler(
         f"https://t.me/"
         f"{chat.username}"
     )
-
-    # =====================================================
-    # SAVE CALL
-    # =====================================================
 
     try:
 
@@ -853,10 +980,6 @@ async def channel_post_handler(
         )
 
         return
-
-    # =====================================================
-    # FORMATTED KOLPULSE LIVE ALERT
-    # =====================================================
 
     try:
 
@@ -904,9 +1027,7 @@ async def channel_post_handler(
             "❌ Could not send formatted alert: "
             f"{type(error).__name__}: {error}"
         )
-
-
-# =========================================================
+        # =========================================================
 # BUTTON HANDLER
 # =========================================================
 
@@ -1068,7 +1189,7 @@ async def button_handler(
 
             return
 
-        channel = "@" + parts[2]
+        channel = normalize_channel(parts[2])
 
         if str(query.message.chat.id) != GROUP_CHAT_ID:
 
@@ -1111,6 +1232,32 @@ async def button_handler(
 
             return
 
+        # Prevent duplicate approval.
+        try:
+
+            existing_verified = get_verified_channel(channel)
+
+            if existing_verified:
+
+                update_request_status(
+                    channel,
+                    "approved"
+                )
+
+                await query.edit_message_text(
+                    "📡 CHANNEL TRACKING REQUEST\n\n"
+                    f"📺 Channel: {channel}\n\n"
+                    "🟢 STATUS: ALREADY APPROVED"
+                )
+
+                return
+
+        except Exception as error:
+
+            print(
+                f"Existing verification check error: {error}"
+            )
+
         # =================================================
         # SAVE VERIFIED CHANNEL
         # =================================================
@@ -1122,6 +1269,11 @@ async def button_handler(
                 user_id=user_id,
             )
 
+            update_request_status(
+                channel,
+                "approved"
+            )
+
             print(
                 f"✅ Verified channel saved: "
                 f"{channel} at {verified_at}"
@@ -1131,7 +1283,7 @@ async def button_handler(
 
             print(
                 f"❌ Could not save verified channel: "
-                f"{error}"
+                f"{type(error).__name__}: {error}"
             )
 
             await query.answer(
@@ -1218,7 +1370,7 @@ async def button_handler(
 
             return
 
-        channel = "@" + parts[2]
+        channel = normalize_channel(parts[2])
 
         if str(query.message.chat.id) != GROUP_CHAT_ID:
 
@@ -1263,12 +1415,26 @@ async def button_handler(
 
         try:
 
+            update_request_status(
+                channel,
+                "rejected"
+            )
+
+        except Exception as error:
+
+            print(
+                f"Could not update rejected status: {error}"
+            )
+
+        try:
+
             await context.bot.send_message(
                 chat_id=user_id,
                 text=(
                     "❌ Channel Request Rejected\n\n"
                     f"📡 Channel: {channel}\n\n"
-                    "Your tracking request was rejected by KOLPulse."
+                    "Your tracking request was rejected by KOLPulse.\n\n"
+                    "You can submit the channel again if needed."
                 ),
             )
 
@@ -1330,10 +1496,8 @@ async def button_handler(
             "Unknown option."
         ),
         reply_markup=main_menu(),
-    )
-
-
-# =========================================================
+                )
+    # =========================================================
 # TEXT MESSAGE HANDLER
 # =========================================================
 
@@ -1358,32 +1522,7 @@ async def channel_message(
         "waiting_for_kol_search"
     ):
 
-        channel = message_text
-
-        if "t.me/" in channel:
-
-            channel = channel.split(
-                "t.me/",
-                1
-            )[1]
-
-            channel = channel.split(
-                "?",
-                1
-            )[0]
-
-            channel = channel.split(
-                "/",
-                1
-            )[0]
-
-            if not channel.startswith("@"):
-
-                channel = "@" + channel
-
-        elif not channel.startswith("@"):
-
-            channel = "@" + channel
+        channel = normalize_channel(message_text)
 
         context.user_data[
             "waiting_for_kol_search"
@@ -1406,36 +1545,68 @@ async def channel_message(
 
         return
 
-    channel = message_text
+    channel = normalize_channel(message_text)
 
-    if "t.me/" in channel:
-
-        channel = channel.split(
-            "t.me/",
-            1
-        )[1]
-
-        channel = channel.split(
-            "?",
-            1
-        )[0]
-
-        channel = channel.split(
-            "/",
-            1
-        )[0]
-
-        if not channel.startswith("@"):
-
-            channel = "@" + channel
-
-    elif not channel.startswith("@"):
-
-        channel = "@" + channel
-
+    # Stop waiting immediately.
     context.user_data[
         "waiting_for_channel"
     ] = False
+
+    # =====================================================
+    # CHECK CHANNEL STATUS BEFORE SENDING ADMIN REQUEST
+    # =====================================================
+
+    try:
+
+        status = get_request_status(channel)
+
+    except Exception as error:
+
+        print(
+            f"❌ Channel status check failed: "
+            f"{type(error).__name__}: {error}"
+        )
+
+        await update.message.reply_text(
+            "⚠️ Could not check your channel status.\n\n"
+            "Please try again in a moment.",
+            reply_markup=main_menu(),
+        )
+
+        return
+
+    # =====================================================
+    # ALREADY APPROVED
+    # =====================================================
+
+    if status == "approved":
+
+        await update.message.reply_text(
+            "✅ Channel Already Approved!\n\n"
+            f"📡 Channel: {channel}\n\n"
+            "Your channel is already verified on KOLPulse.\n\n"
+            "🔎 Your KOL results can already be tracked.",
+            reply_markup=main_menu(),
+        )
+
+        return
+
+    # =====================================================
+    # ALREADY PENDING
+    # =====================================================
+
+    if status == "pending":
+
+        await update.message.reply_text(
+            "⏳ Channel Already Pending!\n\n"
+            f"📡 Channel: {channel}\n\n"
+            "Your tracking request is already waiting "
+            "for admin approval.\n\n"
+            "Please wait for the admin decision.",
+            reply_markup=main_menu(),
+        )
+
+        return
 
     # =====================================================
     # USER INFORMATION
@@ -1456,6 +1627,44 @@ async def channel_message(
         )
 
     user_id = user.id
+
+    # =====================================================
+    # SAVE AS PENDING BEFORE NOTIFYING ADMIN
+    # =====================================================
+
+    try:
+
+        created = save_pending_request(
+            channel,
+            user_id
+        )
+
+        if not created:
+
+            await update.message.reply_text(
+                "⏳ Channel Already Pending!\n\n"
+                f"📡 Channel: {channel}\n\n"
+                "Your tracking request is already waiting "
+                "for admin approval.",
+                reply_markup=main_menu(),
+            )
+
+            return
+
+    except Exception as error:
+
+        print(
+            f"❌ Could not save pending request: "
+            f"{type(error).__name__}: {error}"
+        )
+
+        await update.message.reply_text(
+            "⚠️ Could not create your tracking request.\n\n"
+            "Please try again.",
+            reply_markup=main_menu(),
+        )
+
+        return
 
     current_time = datetime.now().strftime(
         "%Y-%m-%d %H:%M:%S"
@@ -1516,7 +1725,7 @@ async def channel_message(
         )
 
     # =====================================================
-    # USER CONFIRMATION
+    # IF GROUP FAILED, KEEP REQUEST PENDING BUT TELL USER
     # =====================================================
 
     if group_sent:
@@ -1534,8 +1743,9 @@ async def channel_message(
         confirmation = (
             "⚠️ Channel received!\n\n"
             f"📡 Channel: {channel}\n\n"
-            "Your request was received, but the admin "
-            "notification could not be sent."
+            "Your request was saved, but the admin "
+            "notification could not be sent.\n\n"
+            "Please contact support."
         )
 
     await update.message.reply_text(
@@ -1564,6 +1774,9 @@ def main():
 
     init_database()
 
+    # Create the pending/approved/rejected request table.
+    ensure_tracking_requests_table()
+
     print(
         "🚀 KOLPulse Bot starting..."
     )
@@ -1582,6 +1795,10 @@ def main():
 
     print(
         "🗄️ Database initialized."
+    )
+
+    print(
+        "🗂️ Channel tracking request status system initialized."
     )
 
     app = (
@@ -1659,4 +1876,4 @@ def main():
 # =========================================================
 
 if __name__ == "__main__":
-    main()  
+    main()
