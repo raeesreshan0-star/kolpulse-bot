@@ -53,27 +53,25 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
 
-    if query.data == "track_channel":
-        context.user_data["waiting_for_channel"] = True
+ if query.data == "track_channel":
+    context.user_data["waiting_for_channel"] = True
 
-        await query.edit_message_text(
-            "📡 Track My Channel\n\n"
-            "Send your Telegram channel username or link.\n\n"
-            "Examples:\n"
-            "@MyCryptoChannel\n"
-            "https://t.me/MyCryptoChannel\n"
-            "t.me/MyCryptoChannel",
-            reply_markup=InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton(
-                        "⬅️ Back to Menu",
-                        callback_data="back_menu"
-                    )
-                ]
-            ]),
-        )
-        return
-
+    await query.edit_message_text(
+        "📡 Track My Channel\n\n"
+        "Send your Telegram channel username.\n\n"
+        "Example:\n"
+        "@MyCryptoChannel\n\n"
+        "Make sure the channel username is correct.",
+        reply_markup=InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "⬅️ Back to Menu",
+                    callback_data="back_menu"
+                )
+            ]
+        ]),
+    )
+    return
     if query.data == "back_menu":
         context.user_data["waiting_for_channel"] = False
 
