@@ -97,45 +97,29 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
-async def channel_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+ async def channel_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.user_data.get("waiting_for_channel"):
         return
 
-    username = update.message.text.strip()
+    channel = update.message.text.strip()
 
-    if not username.startswith("@"):
-        username = "@" + username
+    # Accept Telegram links
+    if "t.me/" in channel:
+        channel = channel.split("t.me/")[1]
+        channel = channel.split("?")[0]
+        channel = channel.split("/")[0]
+        channel = "@" + channel
+
+    # Accept @username
+    elif not channel.startswith("@"):
+        channel = "@" + channel
 
     context.user_data["waiting_for_channel"] = False
 
     await update.message.reply_text(
         f"✅ Channel received!\n\n"
-        f"📡 Channel: {username}\n\n"
+        f"📡 Channel: {channel}\n\n"
         "Your tracking request has been submitted to KOLPulse.\n"
         "Channel verification and tracking setup will be added next.",
         reply_markup=main_menu(),
     )
-
-
-def main():
-    if not BOT_TOKEN:
-        raise ValueError("BOT_TOKEN is not configured.")
-
-    app = Application.builder().token(BOT_TOKEN).build()
-
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CallbackQueryHandler(button_handler))
-
-    app.add_handler(
-        MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            channel_message
-        )
-    )
-
-    print("KOLPulse bot is running...")
-    app.run_polling()
-
-
-if __name__ == "__main__":
-    main()
