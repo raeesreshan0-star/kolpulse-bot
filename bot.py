@@ -58,12 +58,18 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.edit_message_text(
             "📡 Track My Channel\n\n"
-            "Send your Telegram channel username.\n\n"
-            "Example:\n"
-            "@MyCryptoChannel\n\n"
-            "Make sure the channel username is correct.",
+            "Send your Telegram channel username or link.\n\n"
+            "Examples:\n"
+            "@MyCryptoChannel\n"
+            "https://t.me/MyCryptoChannel\n"
+            "t.me/MyCryptoChannel",
             reply_markup=InlineKeyboardMarkup([
-                [InlineKeyboardButton("⬅️ Back to Menu", callback_data="back_menu")]
+                [
+                    InlineKeyboardButton(
+                        "⬅️ Back to Menu",
+                        callback_data="back_menu"
+                    )
+                ]
             ]),
         )
         return
@@ -72,23 +78,41 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data["waiting_for_channel"] = False
 
         await query.edit_message_text(
-            "⚡ KOLPulse Main Menu\n\nChoose an option below:",
+            "⚡ KOLPulse Main Menu\n\n"
+            "Choose an option below:",
             reply_markup=main_menu(),
         )
         return
 
     responses = {
-        "live_calls": "🔥 Live Calls\n\nLive tracked KOL calls will appear here.",
-        "leaderboard": "📊 KOL Leaderboard\n\nLeaderboard data will appear here.",
-        "search_kol": "🔎 Search KOL\n\nSearch for a tracked KOL or channel.",
-        "performance": "📈 Call Performance\n\nIndividual call performance will appear here.",
-        "top_kols": "🏆 Top KOLs\n\nTop performing KOLs will appear here.",
-        "about": (
+        "live_calls":
+            "🔥 Live Calls\n\n"
+            "Live tracked KOL calls will appear here.",
+
+        "leaderboard":
+            "📊 KOL Leaderboard\n\n"
+            "Leaderboard data will appear here.",
+
+        "search_kol":
+            "🔎 Search KOL\n\n"
+            "Search for a tracked KOL or channel.",
+
+        "performance":
+            "📈 Call Performance\n\n"
+            "Individual call performance will appear here.",
+
+        "top_kols":
+            "🏆 Top KOLs\n\n"
+            "Top performing KOLs will appear here.",
+
+        "about":
             "ℹ️ KOLPulse\n\n"
             "KOLPulse tracks Telegram KOL calls and provides "
-            "performance, ROI and leaderboard data."
-        ),
-        "support": "🆘 Support\n\nContact: @ZENITP2P",
+            "performance, ROI and leaderboard data.",
+
+        "support":
+            "🆘 Support\n\n"
+            "Contact: @ZENITP2P",
     }
 
     await query.edit_message_text(
@@ -97,7 +121,10 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 
- async def channel_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def channel_message(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
     if not context.user_data.get("waiting_for_channel"):
         return
 
@@ -108,18 +135,8 @@ async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         channel = channel.split("t.me/")[1]
         channel = channel.split("?")[0]
         channel = channel.split("/")[0]
-        channel = "@" + channel
 
-    # Accept @username
-    elif not channel.startswith("@"):
-        channel = "@" + channel
+        if not channel.startswith("@"):
+            channel = "@" + channel
 
-    context.user_data["waiting_for_channel"] = False
-
-    await update.message.reply_text(
-        f"✅ Channel received!\n\n"
-        f"📡 Channel: {channel}\n\n"
-        "Your tracking request has been submitted to KOLPulse.\n"
-        "Channel verification and tracking setup will be added next.",
-        reply_markup=main_menu(),
-    )
+    # Accept @
