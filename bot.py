@@ -28,6 +28,9 @@ from database import (
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID", "").strip()
 
+LIVE_CHANNEL = "@KOLPulse_Live"
+RAVEN_CHANNEL = "@CRYPTO_RAVEN_CALL"
+
 
 # =========================================================
 # MAIN MENU
@@ -393,19 +396,6 @@ async def channel_post_handler(
     if not message:
         return
 
-    # -----------------------------------------------------
-    # GET POST TEXT / CAPTION
-    # -----------------------------------------------------
-
-    text = message.text or message.caption or ""
-
-    if not text:
-        return
-
-    # -----------------------------------------------------
-    # CHANNEL INFORMATION
-    # -----------------------------------------------------
-
     chat = message.chat
 
     if not chat.username:
@@ -421,9 +411,43 @@ async def channel_post_handler(
         f"📨 New channel post received from {channel}"
     )
 
-    # -----------------------------------------------------
+    # =====================================================
+    # RAVEN → KOLPULSE LIVE
+    # =====================================================
+
+    if channel.lower() == RAVEN_CHANNEL.lower():
+
+        try:
+
+            await context.bot.copy_message(
+                chat_id=LIVE_CHANNEL,
+                from_chat_id=chat.id,
+                message_id=message.message_id,
+            )
+
+            print(
+                "✅ Raven post copied to KOLPulse Live."
+            )
+
+        except Exception as error:
+
+            print(
+                "❌ Could not copy Raven post "
+                f"to KOLPulse Live: {error}"
+            )
+
+    # =====================================================
+    # GET POST TEXT / CAPTION
+    # =====================================================
+
+    text = message.text or message.caption or ""
+
+    if not text:
+        return
+
+    # =====================================================
     # CHECK VERIFIED KOL
-    # -----------------------------------------------------
+    # =====================================================
 
     verified = get_verified_channel(channel)
 
@@ -439,9 +463,9 @@ async def channel_post_handler(
         f"✅ Verified KOL detected: {channel}"
     )
 
-    # -----------------------------------------------------
+    # =====================================================
     # CONTRACT DETECTION
-    # -----------------------------------------------------
+    # =====================================================
 
     contract = None
 
@@ -464,9 +488,9 @@ async def channel_post_handler(
 
         return
 
-    # -----------------------------------------------------
+    # =====================================================
     # MARKET CAP DETECTION
-    # -----------------------------------------------------
+    # =====================================================
 
     call_mc = None
 
@@ -486,38 +510,29 @@ async def channel_post_handler(
                 .strip()
             )
 
-            # Handle values like 86.9K / 1.2M
             try:
 
                 if mc_text.lower().endswith("k"):
 
                     call_mc = (
-                        float(
-                            mc_text[:-1]
-                        ) * 1000
+                        float(mc_text[:-1]) * 1000
                     )
 
                 elif mc_text.lower().endswith("m"):
 
                     call_mc = (
-                        float(
-                            mc_text[:-1]
-                        ) * 1000000
+                        float(mc_text[:-1]) * 1000000
                     )
 
                 elif mc_text.lower().endswith("b"):
 
                     call_mc = (
-                        float(
-                            mc_text[:-1]
-                        ) * 1000000000
+                        float(mc_text[:-1]) * 1000000000
                     )
 
                 else:
 
-                    call_mc = float(
-                        mc_text
-                    )
+                    call_mc = float(mc_text)
 
             except ValueError:
 
@@ -534,9 +549,9 @@ async def channel_post_handler(
 
         return
 
-    # -----------------------------------------------------
+    # =====================================================
     # PROJECT NAME
-    # -----------------------------------------------------
+    # =====================================================
 
     project_name = None
 
@@ -555,9 +570,9 @@ async def channel_post_handler(
 
         project_name = contract[:12]
 
-    # -----------------------------------------------------
+    # =====================================================
     # TELEGRAM POST LINK
-    # -----------------------------------------------------
+    # =====================================================
 
     original_call_link = (
         f"https://t.me/"
@@ -570,9 +585,9 @@ async def channel_post_handler(
         f"{chat.username}"
     )
 
-    # -----------------------------------------------------
+    # =====================================================
     # SAVE CALL
-    # -----------------------------------------------------
+    # =====================================================
 
     try:
 
@@ -740,7 +755,6 @@ async def button_handler(
 
         channel = "@" + parts[2]
 
-        # Group check
         if str(query.message.chat.id) != GROUP_CHAT_ID:
 
             await query.answer(
@@ -750,7 +764,6 @@ async def button_handler(
 
             return
 
-        # Admin check
         try:
 
             member = await context.bot.get_chat_member(
@@ -892,7 +905,6 @@ async def button_handler(
 
         channel = "@" + parts[2]
 
-        # Group check
         if str(query.message.chat.id) != GROUP_CHAT_ID:
 
             await query.answer(
@@ -902,7 +914,6 @@ async def button_handler(
 
             return
 
-        # Admin check
         try:
 
             member = await context.bot.get_chat_member(
@@ -935,7 +946,6 @@ async def button_handler(
 
             return
 
-        # Notify requester
         try:
 
             await context.bot.send_message(
@@ -1086,10 +1096,6 @@ async def channel_message(
         return
 
     channel = message_text
-
-    # =====================================================
-    # TELEGRAM LINK -> USERNAME
-    # =====================================================
 
     if "t.me/" in channel:
 
@@ -1245,7 +1251,6 @@ def main():
             "GROUP_CHAT_ID is not configured."
         )
 
-    # Initialize database
     init_database()
 
     print(
@@ -1254,6 +1259,14 @@ def main():
 
     print(
         f"📡 Admin Group: {GROUP_CHAT_ID}"
+    )
+
+    print(
+        f"📡 Raven Source: {RAVEN_CHANNEL}"
+    )
+
+    print(
+        f"📡 Live Destination: {LIVE_CHANNEL}"
     )
 
     print(
@@ -1335,4 +1348,4 @@ def main():
 # =========================================================
 
 if __name__ == "__main__":
-    main()
+    main() 
