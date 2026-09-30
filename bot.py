@@ -47,9 +47,6 @@ BOT_LINK = "https://t.me/KOLPulse_Live_bot"
 
 DEX_API_BASE = "https://api.dexscreener.com"
 
-# Live MC refresh interval.
-# 60 seconds is safely within DexScreener's documented
-# token endpoint rate limit.
 TRACK_INTERVAL_SECONDS = 60
 
 
@@ -813,7 +810,7 @@ def detect_dex_chain(text):
 
 
 # =========================================================
-# MARKET CAP DETECTION FROM POST
+# MARKET CAP DETECTION
 # =========================================================
 
 def parse_market_cap(text):
@@ -1171,10 +1168,6 @@ def fetch_dex_market_cap_sync(
 
     urls = []
 
-    # -----------------------------------------------------
-    # Preferred: token-pairs endpoint
-    # -----------------------------------------------------
-
     if chain_id:
 
         encoded_contract = (
@@ -1189,15 +1182,10 @@ def fetch_dex_market_cap_sync(
             f"{chain_id}/{encoded_contract}"
         )
 
-        # Also try tokens endpoint.
         urls.append(
             f"{DEX_API_BASE}/tokens/v1/"
             f"{chain_id}/{encoded_contract}"
         )
-
-    # -----------------------------------------------------
-    # Fallback search
-    # -----------------------------------------------------
 
     encoded_query = urllib.parse.quote(
         contract,
@@ -1270,8 +1258,6 @@ def fetch_dex_market_cap_sync(
 
                 if market_cap is None:
 
-                    # Some responses can have
-                    # FDV but no market cap.
                     market_cap = pair.get(
                         "fdv"
                     )
@@ -1326,7 +1312,6 @@ def fetch_dex_market_cap_sync(
 
                 continue
 
-            # Highest liquidity pair is used.
             valid_pairs.sort(
                 key=lambda item: item[1],
                 reverse=True
@@ -1467,10 +1452,6 @@ def get_pump_milestone(
 
         return 1
 
-    # 2.00x -> 2
-    # 2.99x -> 2
-    # 3.00x -> 3
-    # 1000x -> 1000
     return int(
         multiplier
     )
@@ -1693,17 +1674,6 @@ async def update_one_tracked_call(
 
         old_last_milestone = 1
 
-    # -----------------------------------------------------
-    # IMPORTANT:
-    #
-    # We NEVER reduce the saved pump milestone.
-    #
-    # If token reaches 5X and later falls to 2X,
-    # last_milestone remains 5.
-    #
-    # No dump alert is ever sent.
-    # -----------------------------------------------------
-
     new_last_milestone = max(
         old_last_milestone,
         milestone
@@ -1737,21 +1707,6 @@ async def update_one_tracked_call(
         f"{multiplier:.2f}X | "
         f"ATH {format_market_cap(new_ath_mc)}"
     )
-
-    # -----------------------------------------------------
-    # PUMP ALERT
-    #
-    # Only send when a NEW whole-number X milestone
-    # has been reached.
-    #
-    # 1X -> no alert
-    # 2X -> alert
-    # 3X -> alert
-    # ...
-    # 1000X -> alert
-    #
-    # No dump alerts.
-    # -----------------------------------------------------
 
     if (
         milestone >= 2
@@ -1828,7 +1783,6 @@ async def live_mc_tracker(
                         f"{error}"
                     )
 
-                # Small delay between tokens.
                 await asyncio.sleep(
                     0.25
                 )
@@ -2350,6 +2304,48 @@ async def channel_post_handler(
         f"{channel}"
     )
 
+    # =====================================================
+    # VIDEO DETECTION
+    # =====================================================
+
+    video_file_id = None
+    video_type = None
+
+    if message.video:
+
+        video_file_id = (
+            message.video.file_id
+        )
+
+        video_type = "video"
+
+        print(
+            "🎥 VIDEO ATTACHMENT DETECTED"
+        )
+
+    elif message.animation:
+
+        video_file_id = (
+            message.animation.file_id
+        )
+
+        video_type = "animation"
+
+        print(
+            "🎞️ ANIMATION ATTACHMENT DETECTED"
+        )
+
+    if video_file_id:
+
+        print(
+            f"🎥 Telegram file_id: "
+            f"{video_file_id}"
+        )
+
+    # =====================================================
+    # TEXT / CAPTION
+    # =====================================================
+
     text = (
         message.text
         or message.caption
@@ -2438,14 +2434,7 @@ async def channel_post_handler(
     )
 
     # -----------------------------------------------------
-    # IMPORTANT:
-    #
-    # FIRST TRY LIVE DEXSCREENER MC.
-    #
-    # This becomes the Call MC.
-    #
-    # If API is temporarily unavailable,
-    # use MC written in promotion as fallback.
+    # PROMOTION-TIME LIVE MC
     # -----------------------------------------------------
 
     print(
@@ -2605,7 +2594,12 @@ async def channel_post_handler(
                 )
             ),
 
-            video_file_id=None,
+            # =================================================
+            # IMPORTANT:
+            # Save Telegram's original video file_id.
+            # =================================================
+
+            video_file_id=video_file_id,
 
             status="live",
         )
@@ -2617,6 +2611,12 @@ async def channel_post_handler(
         print(
             f"   Call ID: {call_id}"
         )
+
+        if video_file_id:
+
+            print(
+                "🎥 Video file_id saved with call."
+            )
 
     except Exception as error:
 
@@ -2710,21 +2710,71 @@ async def channel_post_handler(
             f'BOT</a>'
         )
 
-        await context.bot.send_message(
+        # =================================================
+        # IMPORTANT VIDEO SEND
+        #
+        # If the original KOL post has a video,
+        # send it to KOLPulse Live with the alert
+        # as its caption.
+        #
+        # If there is no video, send normal text.
+        # =================================================
 
-            chat_id=LIVE_CHANNEL,
+        if video_file_id:
 
-            text=alert_text,
+            if video_type == "animation":
 
-            parse_mode="HTML",
+                await context.bot.send_animation(
 
-            disable_web_page_preview=True,
-        )
+                    chat_id=LIVE_CHANNEL,
 
-        print(
-            f"✅ Initial alert sent to "
-            f"{LIVE_CHANNEL}"
-        )
+                    animation=video_file_id,
+
+                    caption=alert_text,
+
+                    parse_mode="HTML",
+                )
+
+                print(
+                    f"✅ Initial animation alert sent "
+                    f"to {LIVE_CHANNEL}"
+                )
+
+            else:
+
+                await context.bot.send_video(
+
+                    chat_id=LIVE_CHANNEL,
+
+                    video=video_file_id,
+
+                    caption=alert_text,
+
+                    parse_mode="HTML",
+                )
+
+                print(
+                    f"✅ Initial VIDEO alert sent "
+                    f"to {LIVE_CHANNEL}"
+                )
+
+        else:
+
+            await context.bot.send_message(
+
+                chat_id=LIVE_CHANNEL,
+
+                text=alert_text,
+
+                parse_mode="HTML",
+
+                disable_web_page_preview=True,
+            )
+
+            print(
+                f"✅ Initial text alert sent "
+                f"to {LIVE_CHANNEL}"
+            )
 
     except Exception as error:
 
@@ -3839,10 +3889,6 @@ def main():
             "GROUP_CHAT_ID is not configured."
         )
 
-    # -----------------------------------------------------
-    # DATABASE
-    # -----------------------------------------------------
-
     init_database()
 
     ensure_tracking_requests_table()
@@ -3897,9 +3943,9 @@ def main():
         "🔴 Dump alerts DISABLED."
     )
 
-    # -----------------------------------------------------
-    # APPLICATION
-    # -----------------------------------------------------
+    print(
+        "🎥 KOL video forwarding enabled."
+    )
 
     app = (
         Application
@@ -3908,10 +3954,6 @@ def main():
         .post_init(post_init)
         .build()
     )
-
-    # -----------------------------------------------------
-    # COMMANDS
-    # -----------------------------------------------------
 
     app.add_handler(
         CommandHandler(
@@ -3927,19 +3969,11 @@ def main():
         )
     )
 
-    # -----------------------------------------------------
-    # CALLBACK BUTTONS
-    # -----------------------------------------------------
-
     app.add_handler(
         CallbackQueryHandler(
             button_handler
         )
     )
-
-    # -----------------------------------------------------
-    # CHANNEL POSTS
-    # -----------------------------------------------------
 
     app.add_handler(
         MessageHandler(
@@ -3947,10 +3981,6 @@ def main():
             channel_post_handler,
         )
     )
-
-    # -----------------------------------------------------
-    # TEXT MESSAGES
-    # -----------------------------------------------------
 
     app.add_handler(
         MessageHandler(
@@ -3978,4 +4008,4 @@ def main():
 
 if __name__ == "__main__":
 
-    main() 
+    main()
