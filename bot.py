@@ -36,9 +36,9 @@ from database import (
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID", "").strip()
 
-# All detected calls will be sent here.
 LIVE_CHANNEL = "@KOLPulse_Live"
 
+BOT_USERNAME = "@KOLPulse_Live_bot"
 BOT_LINK = "https://t.me/KOLPulse_Live_bot"
 
 
@@ -48,13 +48,13 @@ BOT_LINK = "https://t.me/KOLPulse_Live_bot"
 
 def normalize_channel(channel):
     """
-    Return a clean Telegram channel username.
+    Convert channel input into a clean @username.
 
-    Examples:
-    @CryptoRavenCall
-    CryptoRavenCall
-    https://t.me/CryptoRavenCall
-    https://t.me/CryptoRavenCall/123
+    Supported:
+    @MyChannel
+    MyChannel
+    https://t.me/MyChannel
+    https://t.me/MyChannel/123
     """
 
     channel = (channel or "").strip()
@@ -85,8 +85,9 @@ def normalize_channel(channel):
 
 def ensure_tracking_requests_table():
     """
-    Stores Track My Channel requests:
+    Stores Track My Channel requests.
 
+    Status:
     pending
     approved
     rejected
@@ -113,7 +114,6 @@ def ensure_tracking_requests_table():
 def get_request_status(channel):
     """
     Return:
-
     approved
     pending
     rejected
@@ -121,10 +121,11 @@ def get_request_status(channel):
     """
 
     channel = normalize_channel(channel)
+
     clean = channel.lstrip("@").lower()
 
     # -----------------------------------------------------
-    # APPROVED CHANNELS
+    # CHECK VERIFIED CHANNEL
     # -----------------------------------------------------
 
     try:
@@ -145,7 +146,7 @@ def get_request_status(channel):
         )
 
     # -----------------------------------------------------
-    # REQUEST STATUS
+    # CHECK REQUEST TABLE
     # -----------------------------------------------------
 
     conn = get_connection()
@@ -157,7 +158,9 @@ def get_request_status(channel):
         WHERE LOWER(REPLACE(channel_username, '@', '')) = ?
         ORDER BY id DESC
         LIMIT 1
-    """, (clean,))
+    """, (
+        clean,
+    ))
 
     row = cursor.fetchone()
 
@@ -244,9 +247,6 @@ def save_pending_request(channel, user_id):
 
 
 def update_request_status(channel, status):
-    """
-    Update local request status.
-    """
 
     channel = normalize_channel(channel)
 
@@ -327,7 +327,7 @@ def main_menu():
 
 
 # =========================================================
-# ACCEPT / REJECT BUTTONS
+# REQUEST BUTTONS
 # =========================================================
 
 def request_buttons(user_id, channel):
@@ -367,6 +367,10 @@ async def start(
 
     context.user_data[
         "waiting_for_kol_search"
+    ] = False
+
+    context.user_data[
+        "channel_admin_check"
     ] = False
 
     await update.message.reply_text(
@@ -992,20 +996,6 @@ async def show_kol_results(
 # =========================================================
 
 def is_verified_channel(channel):
-    """
-    IMPORTANT:
-
-    There is NO hard-coded Raven-only restriction.
-
-    Any channel existing in the verified_channels
-    database is considered an approved KOL channel.
-
-    This means:
-        Raven              -> detected
-        Barbie Squirrel    -> detected
-        Third verified     -> detected
-        Future verified    -> detected
-    """
 
     channel = normalize_channel(
         channel
@@ -1050,7 +1040,7 @@ async def channel_post_handler(
     chat = message.chat
 
     # -----------------------------------------------------
-    # CHANNEL USERNAME
+    # PUBLIC CHANNEL USERNAME
     # -----------------------------------------------------
 
     if not chat.username:
@@ -1075,7 +1065,7 @@ async def channel_post_handler(
     )
 
     # -----------------------------------------------------
-    # MESSAGE TEXT / CAPTION
+    # TEXT / CAPTION
     # -----------------------------------------------------
 
     text = (
@@ -1095,16 +1085,6 @@ async def channel_post_handler(
     # -----------------------------------------------------
     # VERIFIED CHANNEL CHECK
     # -----------------------------------------------------
-    #
-    # IMPORTANT:
-    #
-    # We DO NOT check Raven here.
-    #
-    # We check the database.
-    #
-    # Every approved channel is allowed.
-    #
-    # -----------------------------------------------------
 
     if not is_verified_channel(
         channel
@@ -1122,7 +1102,7 @@ async def channel_post_handler(
     )
 
     # -----------------------------------------------------
-    # CONTRACT DETECTION
+    # CONTRACT
     # -----------------------------------------------------
 
     contract = parse_contract(
@@ -1143,7 +1123,7 @@ async def channel_post_handler(
     )
 
     # -----------------------------------------------------
-    # MARKET CAP DETECTION
+    # MARKET CAP
     # -----------------------------------------------------
 
     call_mc = parse_market_cap(
@@ -1194,7 +1174,7 @@ async def channel_post_handler(
     )
 
     # -----------------------------------------------------
-    # TELEGRAM LINKS
+    # LINKS
     # -----------------------------------------------------
 
     original_call_link = (
@@ -1268,7 +1248,7 @@ async def channel_post_handler(
         return
 
     # -----------------------------------------------------
-    # SEND ALERT TO KOLPULSE LIVE
+    # SEND ALERT TO LIVE CHANNEL
     # -----------------------------------------------------
 
     try:
@@ -1328,8 +1308,7 @@ async def channel_post_handler(
         )
 
         print(
-            "✅ Alert sent to "
-            f"{LIVE_CHANNEL}"
+            f"✅ Alert sent to {LIVE_CHANNEL}"
         )
 
     except Exception as error:
@@ -1355,6 +1334,7 @@ async def button_handler(
 ):
 
     query = update.callback_query
+
     data = query.data
 
     # =====================================================
@@ -1393,7 +1373,7 @@ async def button_handler(
         return
 
     # =====================================================
-    # KOL LEADERBOARD
+    # LEADERBOARD
     # =====================================================
 
     if data == "leaderboard":
@@ -1410,8 +1390,7 @@ async def button_handler(
 
             print(
                 "Leaderboard error: "
-                f"{type(error).__name__}: "
-                f"{error}"
+                f"{type(error).__name__}: {error}"
             )
 
             await query.edit_message_text(
@@ -1439,18 +1418,81 @@ async def button_handler(
 
         context.user_data[
             "waiting_for_channel"
+        ] = False
+
+        context.user_data[
+            "waiting_for_kol_search"
+        ] = False
+
+        context.user_data[
+            "channel_admin_check"
+        ] = False
+
+        await query.edit_message_text(
+            "📡 Track My Channel\n\n"
+
+            "Before submitting your channel, "
+            "you must add our bot as an Admin:\n\n"
+
+            f"🤖 {BOT_USERNAME}\n\n"
+
+            "Please add the bot as an Admin in "
+            "your Telegram channel.\n\n"
+
+            "After you have added the bot, "
+            "click the button below.",
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "🤖 I Added Bot as Admin",
+                        callback_data="check_bot_admin"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "⬅️ Back to Menu",
+                        callback_data="back_menu"
+                    )
+                ]
+            ]),
+        )
+
+        return
+
+    # =====================================================
+    # I ADDED BOT AS ADMIN
+    # =====================================================
+
+    if data == "check_bot_admin":
+
+        await query.answer()
+
+        context.user_data[
+            "waiting_for_channel"
         ] = True
 
         context.user_data[
             "waiting_for_kol_search"
         ] = False
 
+        context.user_data[
+            "channel_admin_check"
+        ] = True
+
         await query.edit_message_text(
-            "📡 Track My Channel\n\n"
-            "Send your Telegram channel username.\n\n"
+            "✅ Got it!\n\n"
+
+            "Now send your Telegram channel username.\n\n"
+
             "Example:\n"
             "@MyCryptoChannel\n\n"
-            "Make sure the channel username is correct.",
+
+            "Make sure the channel username is correct.\n\n"
+
+            "🔐 KOLPulse will verify that "
+            "@KOLPulse_Live_bot is an Admin in "
+            "that channel before your request "
+            "can be submitted.",
             reply_markup=InlineKeyboardMarkup([
                 [
                     InlineKeyboardButton(
@@ -1499,6 +1541,10 @@ async def button_handler(
 
         context.user_data[
             "waiting_for_kol_search"
+        ] = False
+
+        context.user_data[
+            "channel_admin_check"
         ] = False
 
         await query.edit_message_text(
@@ -1659,7 +1705,7 @@ async def button_handler(
             return
 
         # -------------------------------------------------
-        # NOTIFY REQUESTER
+        # NOTIFY USER
         # -------------------------------------------------
 
         try:
@@ -1855,7 +1901,7 @@ async def button_handler(
         except Exception as error:
 
             print(
-                f"Could not update group message: "
+                f"Could not update rejected message: "
                 f"{error}"
             )
 
@@ -1894,6 +1940,71 @@ async def button_handler(
         ),
         reply_markup=main_menu(),
     )
+
+
+# =========================================================
+# VERIFY BOT ADMIN IN CHANNEL
+# =========================================================
+
+async def verify_bot_is_channel_admin(
+    context,
+    channel
+):
+    """
+    Check whether KOLPulse bot is Admin in the
+    submitted Telegram channel.
+    """
+
+    channel = normalize_channel(
+        channel
+    )
+
+    try:
+
+        # -------------------------------------------------
+        # GET CHANNEL
+        # -------------------------------------------------
+
+        chat = await context.bot.get_chat(
+            channel
+        )
+
+        # -------------------------------------------------
+        # CHECK BOT MEMBER STATUS
+        # -------------------------------------------------
+
+        bot_member = await context.bot.get_chat_member(
+            chat_id=chat.id,
+            user_id=context.bot.id
+        )
+
+        print(
+            f"🔐 Bot status in {channel}: "
+            f"{bot_member.status}"
+        )
+
+        # -------------------------------------------------
+        # ADMIN / CREATOR
+        # -------------------------------------------------
+
+        if bot_member.status in [
+            "administrator",
+            "creator"
+        ]:
+
+            return True, chat, bot_member.status
+
+        return False, chat, bot_member.status
+
+    except Exception as error:
+
+        print(
+            "❌ Could not verify bot admin status "
+            f"for {channel}: "
+            f"{type(error).__name__}: {error}"
+        )
+
+        return False, None, None
 
 
 # =========================================================
@@ -1954,12 +2065,100 @@ async def channel_message(
         message_text
     )
 
+    # -----------------------------------------------------
+    # STOP WAITING TEMPORARILY
+    # -----------------------------------------------------
+
     context.user_data[
         "waiting_for_channel"
     ] = False
 
     # =====================================================
-    # CHECK CHANNEL STATUS
+    # VERIFY BOT ADMIN
+    # =====================================================
+    #
+    # This is the important security check.
+    #
+    # The user must add:
+    #
+    # @KOLPulse_Live_bot
+    #
+    # as Admin before the request is submitted.
+    #
+    # =====================================================
+
+    print(
+        f"🔐 Checking bot Admin access in {channel}..."
+    )
+
+    (
+        bot_is_admin,
+        telegram_chat,
+        bot_status
+    ) = await verify_bot_is_channel_admin(
+        context,
+        channel
+    )
+
+    # =====================================================
+    # BOT IS NOT ADMIN
+    # =====================================================
+
+    if not bot_is_admin:
+
+        context.user_data[
+            "waiting_for_channel"
+        ] = True
+
+        await update.message.reply_text(
+            "❌ Bot Is Not Admin Yet\n\n"
+
+            f"📡 Channel: {channel}\n\n"
+
+            f"Please add:\n"
+            f"🤖 {BOT_USERNAME}\n\n"
+
+            "as an Admin in your Telegram channel.\n\n"
+
+            "After adding the bot as Admin, "
+            "send your channel username again.\n\n"
+
+            "⚠️ Your request has NOT been submitted.",
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "🤖 I Added Bot as Admin",
+                        callback_data="check_bot_admin"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "⬅️ Back to Menu",
+                        callback_data="back_menu"
+                    )
+                ]
+            ]),
+        )
+
+        return
+
+    # =====================================================
+    # BOT IS ADMIN
+    # =====================================================
+
+    print(
+        f"✅ KOLPulse bot is Admin in {channel}"
+    )
+
+    await update.message.reply_text(
+        "✅ Bot Admin Verified!\n\n"
+        f"📡 Channel: {channel}\n\n"
+        "Your channel can now be submitted for "
+        "KOLPulse verification.",
+    )
+
+    # =====================================================
+    # CHECK CHANNEL REQUEST STATUS
     # =====================================================
 
     try:
@@ -2037,7 +2236,7 @@ async def channel_message(
     user_id = user.id
 
     # =====================================================
-    # SAVE AS PENDING
+    # SAVE PENDING REQUEST
     # =====================================================
 
     try:
@@ -2084,12 +2283,20 @@ async def channel_message(
 
     notification = (
         "📡 NEW CHANNEL TRACKING REQUEST\n\n"
+
         f"👤 User: {user_display}\n"
         f"🆔 Telegram ID: {user_id}\n\n"
+
         f"📺 Channel: {channel}\n"
-        f"🔗 Link: https://t.me/"
+
+        f"🔗 Link: "
+        f"https://t.me/"
         f"{channel.lstrip('@')}\n\n"
+
+        f"🤖 Bot Admin: ✅ Verified\n"
+
         f"⏰ Time: {current_time}\n\n"
+
         "👇 Admin action required:"
     )
 
@@ -2139,20 +2346,32 @@ async def channel_message(
     if group_sent:
 
         confirmation = (
-            "✅ Channel received!\n\n"
-            f"📡 Channel: {channel}\n\n"
-            "Your tracking request has been submitted "
+            "📡 Channel Submitted Successfully!\n\n"
+
+            f"📺 Channel: {channel}\n"
+
+            "🤖 Bot Admin: ✅ Verified\n\n"
+
+            "⏳ Status: Pending Admin Approval\n\n"
+
+            "Your tracking request has been sent "
             "to KOLPulse.\n\n"
-            "⏳ Waiting for admin approval."
+
+            "Please wait for the admin decision."
         )
 
     else:
 
         confirmation = (
             "⚠️ Channel received!\n\n"
-            f"📡 Channel: {channel}\n\n"
+
+            f"📡 Channel: {channel}\n"
+
+            "🤖 Bot Admin: ✅ Verified\n\n"
+
             "Your request was saved, but the admin "
             "notification could not be sent.\n\n"
+
             "Please contact support."
         )
 
@@ -2205,7 +2424,11 @@ def main():
     )
 
     print(
-        "📡 No Raven-only restriction is enabled."
+        "📡 Raven-only restriction: DISABLED"
+    )
+
+    print(
+        f"🤖 Bot: {BOT_USERNAME}"
     )
 
     print(
@@ -2217,7 +2440,11 @@ def main():
     )
 
     print(
-        "🗂️ Channel tracking request status system initialized."
+        "🗂️ Channel tracking request system initialized."
+    )
+
+    print(
+        "🔐 Channel Admin verification enabled."
     )
 
     # -----------------------------------------------------
@@ -2261,20 +2488,6 @@ def main():
 
     # =====================================================
     # CHANNEL POSTS
-    # =====================================================
-    #
-    # IMPORTANT:
-    #
-    # This receives posts from Telegram channels that
-    # the bot has access to.
-    #
-    # After receiving a post, the handler checks the
-    # verified_channels database.
-    #
-    # Therefore:
-    #
-    # ANY VERIFIED CHANNEL -> ALLOWED
-    #
     # =====================================================
 
     app.add_handler(
