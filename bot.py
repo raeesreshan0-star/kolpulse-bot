@@ -46,12 +46,25 @@ BOT_LINK = "https://t.me/KOLPulse_Live_bot"
 # =========================================================
 
 def normalize_channel(channel):
+
     channel = (channel or "").strip()
 
     if "t.me/" in channel.lower():
-        channel = channel.split("t.me/", 1)[1]
-        channel = channel.split("?", 1)[0]
-        channel = channel.split("/", 1)[0]
+
+        channel = channel.split(
+            "t.me/",
+            1
+        )[1]
+
+        channel = channel.split(
+            "?",
+            1
+        )[0]
+
+        channel = channel.split(
+            "/",
+            1
+        )[0]
 
     if not channel.startswith("@"):
         channel = "@" + channel
@@ -60,6 +73,7 @@ def normalize_channel(channel):
 
 
 def ensure_tracking_requests_table():
+
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -79,16 +93,21 @@ def ensure_tracking_requests_table():
 
 
 def get_request_status(channel):
+
     channel = normalize_channel(channel)
     clean = channel.lstrip("@").lower()
 
     try:
-        verified = get_verified_channel(channel)
+
+        verified = get_verified_channel(
+            channel
+        )
 
         if verified:
             return "approved"
 
     except Exception as error:
+
         print(
             "⚠️ get_verified_channel check failed: "
             f"{type(error).__name__}: {error}"
@@ -115,9 +134,16 @@ def get_request_status(channel):
     return row[0]
 
 
-def save_pending_request(channel, user_id):
+def save_pending_request(
+    channel,
+    user_id
+):
+
     channel = normalize_channel(channel)
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    now = datetime.now().strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
 
     conn = get_connection()
     cursor = conn.cursor()
@@ -128,7 +154,9 @@ def save_pending_request(channel, user_id):
         WHERE LOWER(REPLACE(channel_username, '@', '')) = ?
         ORDER BY id DESC
         LIMIT 1
-    """, (channel.lstrip("@").lower(),))
+    """, (
+        channel.lstrip("@").lower(),
+    ))
 
     row = cursor.fetchone()
 
@@ -137,7 +165,9 @@ def save_pending_request(channel, user_id):
         request_id, status = row
 
         if status == "pending":
+
             conn.close()
+
             return False
 
         cursor.execute("""
@@ -177,9 +207,16 @@ def save_pending_request(channel, user_id):
     return True
 
 
-def update_request_status(channel, status):
+def update_request_status(
+    channel,
+    status
+):
+
     channel = normalize_channel(channel)
-    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    now = datetime.now().strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
 
     conn = get_connection()
     cursor = conn.cursor()
@@ -201,61 +238,63 @@ def update_request_status(channel, status):
 
 # =========================================================
 # MAIN MENU
+# ONLY 5 MAIN BUTTONS
 # =========================================================
 
 def main_menu():
 
     keyboard = [
+
         [
-            InlineKeyboardButton(
-                "🔥 Live Calls",
-                callback_data="live_calls"
-            ),
             InlineKeyboardButton(
                 "📡 Track My Channel",
                 callback_data="track_channel"
-            ),
+            )
         ],
+
         [
             InlineKeyboardButton(
                 "📊 KOL Leaderboard",
                 callback_data="leaderboard"
-            ),
+            )
+        ],
+
+        [
             InlineKeyboardButton(
                 "🔎 Search KOL",
                 callback_data="search_kol"
-            ),
+            )
         ],
+
         [
-            InlineKeyboardButton(
-                "📈 Call Performance",
-                callback_data="performance"
-            ),
             InlineKeyboardButton(
                 "🏆 Top KOLs",
                 callback_data="top_kols"
-            ),
+            )
         ],
+
         [
-            InlineKeyboardButton(
-                "ℹ️ About KOLPulse",
-                callback_data="about"
-            ),
             InlineKeyboardButton(
                 "🆘 Support",
                 callback_data="support"
-            ),
+            )
         ],
     ]
 
-    return InlineKeyboardMarkup(keyboard)
+    return InlineKeyboardMarkup(
+        keyboard
+    )
 
 
 # =========================================================
 # ACCEPT / REJECT BUTTONS
+# ADMIN WORKFLOW
 # =========================================================
 
-def request_buttons(user_id, channel):
+def request_buttons(
+    user_id,
+    channel
+):
 
     channel_name = channel.lstrip("@")
 
@@ -263,11 +302,16 @@ def request_buttons(user_id, channel):
         [
             InlineKeyboardButton(
                 "✅ Accept",
-                callback_data=f"accept:{user_id}:{channel_name}"
+                callback_data=(
+                    f"accept:{user_id}:{channel_name}"
+                )
             ),
+
             InlineKeyboardButton(
                 "❌ Reject",
-                callback_data=f"reject:{user_id}:{channel_name}"
+                callback_data=(
+                    f"reject:{user_id}:{channel_name}"
+                )
             ),
         ]
     ])
@@ -282,15 +326,25 @@ async def start(
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    context.user_data["waiting_for_channel"] = False
-    context.user_data["waiting_for_kol_search"] = False
-    context.user_data["channel_admin_check"] = False
+    context.user_data[
+        "waiting_for_channel"
+    ] = False
+
+    context.user_data[
+        "waiting_for_kol_search"
+    ] = False
+
+    context.user_data[
+        "channel_admin_check"
+    ] = False
 
     await update.message.reply_text(
+
         "⚡ Welcome to KOLPulse!\n\n"
-        "Track Telegram KOL calls, performance, ROI "
-        "and leaderboards.\n\n"
+        "Track Telegram KOL calls, "
+        "leaderboards and KOL performance.\n\n"
         "Choose an option below:",
+
         reply_markup=main_menu(),
     )
 
@@ -307,8 +361,10 @@ async def groupid(
     chat = update.effective_chat
 
     await update.message.reply_text(
+
         "🆔 Chat ID:\n\n"
         f"`{chat.id}`",
+
         parse_mode="Markdown",
     )
 
@@ -323,15 +379,21 @@ def format_market_cap(value):
         return "N/A"
 
     if value >= 1_000_000_000:
-        return f"{value / 1_000_000_000:.1f}B"
+        return (
+            f"${value / 1_000_000_000:.1f}B"
+        )
 
     if value >= 1_000_000:
-        return f"{value / 1_000_000:.1f}M"
+        return (
+            f"${value / 1_000_000:.1f}M"
+        )
 
     if value >= 1_000:
-        return f"{value / 1_000:.1f}K"
+        return (
+            f"${value / 1_000:.1f}K"
+        )
 
-    return f"{value:,.0f}"
+    return f"${value:,.0f}"
 
 
 # =========================================================
@@ -344,33 +406,56 @@ def detect_token_symbol(
     contract
 ):
 
+    source = text or ""
+
+    # $TOKEN
     match = re.search(
         r"\$([A-Za-z][A-Za-z0-9_]*)",
-        text or ""
+        source
     )
 
     if match:
+
         return "$" + match.group(1)
 
+
+    # Symbol: TOKEN
+    symbol_patterns = [
+
+        r"(?:token\s*symbol|symbol)"
+        r"\s*[:=\-]\s*"
+        r"\$?([A-Za-z][A-Za-z0-9_]*)",
+
+        r"(?:ticker)"
+        r"\s*[:=\-]\s*"
+        r"\$?([A-Za-z][A-Za-z0-9_]*)",
+    ]
+
+    for pattern in symbol_patterns:
+
+        match = re.search(
+            pattern,
+            source,
+            re.IGNORECASE
+        )
+
+        if match:
+
+            return "$" + match.group(1)
+
+
+    # Try project name
     match = re.search(
         r"\$([A-Za-z][A-Za-z0-9_]*)",
         project_name or ""
     )
 
     if match:
+
         return "$" + match.group(1)
 
-    if project_name:
 
-        clean_name = (
-            project_name
-            .split("|")[0]
-            .strip()
-        )
-
-        if clean_name:
-            return "$" + clean_name.split()[0]
-
+    # Do not use contract address as token symbol.
     return "$TOKEN"
 
 
@@ -379,92 +464,58 @@ def detect_token_symbol(
 # =========================================================
 
 def parse_contract(text):
+
     """
-    Detects:
+    Detects many common CA formats:
+
     Contract: 0x...
     Contract Address: 0x...
     CA: 0x...
     CA : 0x...
-    Contract - 0x...
+    CA - 0x...
+    CA = 0x...
+
+    Solana addresses
+    EVM addresses
+    General long CA strings
     """
 
     if not text:
         return None
 
-    lines = text.splitlines()
 
-    patterns = [
-        r"(?:contract\s+address|contract|ca)\s*:\s*([A-Za-z0-9]{20,120})",
-        r"(?:contract\s+address|contract|ca)\s*[-=]\s*([A-Za-z0-9]{20,120})",
-    ]
+    # =====================================================
+    # EVM ADDRESS
+    # =====================================================
 
-    for line in lines:
-
-        clean_line = line.strip()
-
-        for pattern in patterns:
-
-            match = re.search(
-                pattern,
-                clean_line,
-                re.IGNORECASE
-            )
-
-            if match:
-                return match.group(1).strip()
-
-    # EVM address fallback
     evm = re.search(
         r"\b0x[a-fA-F0-9]{40}\b",
         text
     )
 
-    if evm:
-        return evm.group(0)
-
-    # General fallback
-    fallback = re.search(
-        r"(?:CA|Contract|Contract Address)\s*[:\-]?\s*([A-Za-z0-9]{20,120})",
-        text,
-        re.IGNORECASE
-    )
-
-    if fallback:
-        return fallback.group(1).strip()
-
-    return None
+    # Keep searching for explicit CA first,
+    # but EVM fallback is always available.
 
 
-# =========================================================
-# MARKET CAP / MC DETECTION
-# =========================================================
+    # =====================================================
+    # EXPLICIT LABELS
+    # =====================================================
 
-def parse_market_cap(text):
-    """
-    Supports:
-
-    Market Cap: $50K
-    MC: $50K
-    MC $50K
-    Current MC: $52.5K
-    $30.8K mc
-    Current chart is $30.8K mc
-    Market Cap $1.2M
-    """
-
-    if not text:
-        return None
-
-    # Explicit MC / Market Cap
     explicit_patterns = [
 
-        r"(?:market\s*cap|marketcap|current\s*mc|mc)"
-        r"\s*(?:is|:|=|-)?\s*\$?\s*"
-        r"([0-9]+(?:\.[0-9]+)?)\s*([KMB])?\s*(?:mc|market\s*cap)?",
+        r"(?:contract\s+address)"
+        r"\s*[:=\-]?\s*"
+        r"`?([A-Za-z0-9]{20,120})`?",
 
-        r"\$?\s*([0-9]+(?:\.[0-9]+)?)\s*([KMB])?\s*"
-        r"(?:mc|market\s*cap)\b",
+        r"(?:contract)"
+        r"\s*[:=\-]?\s*"
+        r"`?([A-Za-z0-9]{20,120})`?",
+
+        r"(?:ca)"
+        r"\s*[:=\-]?\s*"
+        r"`?([A-Za-z0-9]{20,120})`?",
     ]
+
 
     for pattern in explicit_patterns:
 
@@ -476,33 +527,190 @@ def parse_market_cap(text):
 
         if match:
 
-            number = float(
-                match.group(1)
+            value = match.group(1).strip()
+
+            # Remove accidental punctuation
+            value = value.strip(
+                "`'\"<>[](){}.,; "
             )
+
+            if len(value) >= 20:
+
+                return value
+
+
+    # =====================================================
+    # EVM FALLBACK
+    # =====================================================
+
+    if evm:
+
+        return evm.group(0)
+
+
+    # =====================================================
+    # SOLANA / GENERAL ADDRESS FALLBACK
+    # =====================================================
+
+    # Long Base58-style strings.
+    # Avoid matching normal English words.
+
+    candidates = re.findall(
+        r"\b[A-HJ-NP-Za-km-z1-9]{32,64}\b",
+        text
+    )
+
+    for candidate in candidates:
+
+        # Skip obvious URLs / normal words
+        if candidate.lower() in [
+            "abcdefghijklmnopqrstuvwxyz",
+            "abcdefghijklmnopqrstuvwxyz123456",
+        ]:
+            continue
+
+        # Require a reasonable mixture
+        has_letter = bool(
+            re.search(
+                r"[A-Za-z]",
+                candidate
+            )
+        )
+
+        has_number = bool(
+            re.search(
+                r"[0-9]",
+                candidate
+            )
+        )
+
+        if has_letter and has_number:
+
+            return candidate
+
+
+    return None
+
+
+# =========================================================
+# MARKET CAP / MC DETECTION
+# =========================================================
+
+def parse_market_cap(text):
+
+    """
+    Supports:
+
+    Market Cap: $50K
+    Market Cap $50K
+    MC: $50K
+    MC $50K
+    Current MC: $52.5K
+    Current Market Cap: $52.5K
+    $30.8K MC
+    $30.8K mc
+    Current chart is $30.8K mc
+    FDV: $1M
+    """
+
+    if not text:
+        return None
+
+
+    # =====================================================
+    # EXPLICIT MC PATTERNS
+    # =====================================================
+
+    explicit_patterns = [
+
+        r"(?:market\s*cap|marketcap)"
+        r"\s*(?:is|:|=|-)?\s*"
+        r"\$?\s*"
+        r"([0-9]+(?:\.[0-9]+)?)"
+        r"\s*([KMB])?\b",
+
+        r"(?:current\s+market\s*cap)"
+        r"\s*(?:is|:|=|-)?\s*"
+        r"\$?\s*"
+        r"([0-9]+(?:\.[0-9]+)?)"
+        r"\s*([KMB])?\b",
+
+        r"(?:current\s*mc)"
+        r"\s*(?:is|:|=|-)?\s*"
+        r"\$?\s*"
+        r"([0-9]+(?:\.[0-9]+)?)"
+        r"\s*([KMB])?\b",
+
+        r"(?:\bmc\b)"
+        r"\s*(?:is|:|=|-)?\s*"
+        r"\$?\s*"
+        r"([0-9]+(?:\.[0-9]+)?)"
+        r"\s*([KMB])?\b",
+
+        r"\$?\s*"
+        r"([0-9]+(?:\.[0-9]+)?)"
+        r"\s*([KMB])?\s*"
+        r"(?:mc|market\s*cap)\b",
+    ]
+
+
+    for pattern in explicit_patterns:
+
+        match = re.search(
+            pattern,
+            text,
+            re.IGNORECASE
+        )
+
+        if match:
+
+            try:
+
+                number = float(
+                    match.group(1)
+                )
+
+            except ValueError:
+
+                continue
 
             suffix = (
                 match.group(2) or ""
             ).upper()
 
             if suffix == "K":
+
                 number *= 1_000
 
             elif suffix == "M":
+
                 number *= 1_000_000
 
             elif suffix == "B":
+
                 number *= 1_000_000_000
 
             return number
 
-    # Current chart is $30.8K mc
+
+    # =====================================================
+    # CURRENT CHART
+    # =====================================================
+
     chart_pattern = re.search(
-        r"(?:current\s+chart|chart|current\s+market\s+cap)"
-        r".{0,60}?\$?\s*"
-        r"([0-9]+(?:\.[0-9]+)?)\s*([KMB])?\s*mc\b",
+
+        r"(?:current\s+chart|chart|"
+        r"current\s+market\s+cap)"
+        r".{0,80}?"
+        r"\$?\s*"
+        r"([0-9]+(?:\.[0-9]+)?)"
+        r"\s*([KMB])?\s*"
+        r"mc\b",
+
         text,
         re.IGNORECASE
     )
+
 
     if chart_pattern:
 
@@ -515,15 +723,118 @@ def parse_market_cap(text):
         ).upper()
 
         if suffix == "K":
+
             number *= 1_000
 
         elif suffix == "M":
+
             number *= 1_000_000
 
         elif suffix == "B":
+
             number *= 1_000_000_000
 
         return number
+
+
+    # =====================================================
+    # FDV / VALUATION FALLBACK
+    # =====================================================
+
+    fdv_pattern = re.search(
+
+        r"(?:fdv|valuation)"
+        r"\s*(?:is|:|=|-)?\s*"
+        r"\$?\s*"
+        r"([0-9]+(?:\.[0-9]+)?)"
+        r"\s*([KMB])?\b",
+
+        text,
+        re.IGNORECASE
+    )
+
+
+    if fdv_pattern:
+
+        number = float(
+            fdv_pattern.group(1)
+        )
+
+        suffix = (
+            fdv_pattern.group(2) or ""
+        ).upper()
+
+        if suffix == "K":
+
+            number *= 1_000
+
+        elif suffix == "M":
+
+            number *= 1_000_000
+
+        elif suffix == "B":
+
+            number *= 1_000_000_000
+
+        return number
+
+
+    # =====================================================
+    # NO MC FOUND
+    # =====================================================
+
+    return None
+
+
+# =========================================================
+# PROJECT LINK DETECTION
+# =========================================================
+
+def parse_project_link(text):
+
+    if not text:
+        return None
+
+
+    urls = re.findall(
+        r"https?://[^\s<>()]+",
+        text,
+        re.IGNORECASE
+    )
+
+
+    for url in urls:
+
+        url = url.rstrip(
+            ".,;:!?)]}>\"'"
+        )
+
+        lower = url.lower()
+
+
+        # Prefer project/social/chart links
+        if (
+            "x.com/" in lower
+            or "twitter.com/" in lower
+            or "dexscreener.com/" in lower
+            or "pump.fun/" in lower
+            or "birdeye.so/" in lower
+            or "raydium.io/" in lower
+            or "dextools.io/" in lower
+        ):
+
+            return url
+
+
+    # If no preferred link,
+    # return first valid URL.
+
+    if urls:
+
+        return urls[0].rstrip(
+            ".,;:!?)]}>\"'"
+        )
+
 
     return None
 
@@ -532,21 +843,31 @@ def parse_market_cap(text):
 # PROJECT NAME
 # =========================================================
 
-def parse_project_name(text, contract):
+def parse_project_name(
+    text,
+    contract
+):
 
     if not text:
+
         return (
             contract[:12]
             if contract
             else "Unknown Project"
         )
 
+
+    # =====================================================
+    # EXPLICIT PROJECT NAME
+    # =====================================================
+
     for line in text.splitlines():
 
         clean = line.strip()
 
         if re.match(
-            r"^(name|project\s*name|project)\s*:",
+            r"^(name|project\s*name|project)"
+            r"\s*:",
             clean,
             re.IGNORECASE
         ):
@@ -558,10 +879,14 @@ def parse_project_name(text, contract):
             )[1].strip()
 
             if value:
+
                 return value
 
-    # Example:
-    # ROBINHOOD TOKEN $ASI
+
+    # =====================================================
+    # TOKEN / $ SYMBOL LINE
+    # =====================================================
+
     for line in text.splitlines():
 
         clean = line.strip()
@@ -575,16 +900,86 @@ def parse_project_name(text, contract):
         ):
 
             if not re.search(
-                r"(?:CA|Contract|Market Cap|Current MC|Dexscreener|Telegram|Twitter|X:)\b",
+                r"(?:CA|Contract|Market Cap|"
+                r"Current MC|MC|Dexscreener|"
+                r"Telegram|Twitter|X:|"
+                r"FDV)\b",
                 clean,
                 re.IGNORECASE
             ):
 
                 if len(clean) <= 120:
+
                     return clean
 
+
+    # =====================================================
+    # X/TWITTER HANDLE AS PROJECT NAME
+    # =====================================================
+
+    x_match = re.search(
+        r"(?:x\.com|twitter\.com)/"
+        r"([A-Za-z0-9_]+)",
+        text,
+        re.IGNORECASE
+    )
+
+    if x_match:
+
+        handle = x_match.group(1)
+
+        if handle:
+
+            return handle
+
+
+    # =====================================================
+    # FIRST SHORT NON-URL LINE
+    # =====================================================
+
+    for line in text.splitlines():
+
+        clean = line.strip()
+
+        if not clean:
+            continue
+
+        if clean.startswith(
+            ("http://", "https://")
+        ):
+            continue
+
+        if re.fullmatch(
+            r"0x[a-fA-F0-9]{40}",
+            clean
+        ):
+            continue
+
+        if re.match(
+            r"^(CA|Contract|Contract Address|"
+            r"MC|Market Cap|FDV)\b",
+            clean,
+            re.IGNORECASE
+        ):
+            continue
+
+        if 2 <= len(clean) <= 100:
+
+            # Avoid long Chinese/English descriptions
+            # being used as project name.
+            if len(clean.split()) <= 12:
+
+                return clean
+
+
+    # =====================================================
+    # CONTRACT FALLBACK
+    # =====================================================
+
     if contract:
+
         return contract[:12]
+
 
     return "Unknown Project"
 
@@ -602,50 +997,115 @@ def detect_chain_symbol(
         text or ""
     ).lower()
 
+
     if (
         "solana" in source
+        or "sol " in source
+        or "sol:" in source
         or "dexscreener.com/solana/" in source
     ):
+
         return "SOL"
+
 
     if (
         "ethereum" in source
+        or "eth " in source
+        or "eth:" in source
         or "dexscreener.com/ethereum/" in source
     ):
+
         return "ETH"
+
 
     if (
         "base" in source
+        or "base chain" in source
         or "dexscreener.com/base/" in source
     ):
+
         return "BASE"
+
 
     if (
         "bsc" in source
         or "bnb" in source
+        or "binance smart chain" in source
         or "dexscreener.com/bsc/" in source
     ):
+
         return "BSC"
+
 
     if (
         "arbitrum" in source
+        or "arb " in source
+        or "arb:" in source
         or "dexscreener.com/arbitrum/" in source
     ):
+
         return "ARB"
+
 
     if (
         "polygon" in source
+        or "matic" in source
         or "dexscreener.com/polygon/" in source
     ):
+
         return "POLY"
+
 
     if (
         "avalanche" in source
+        or "avax" in source
         or "dexscreener.com/avalanche/" in source
     ):
+
         return "AVAX"
 
-    return "RH"
+
+    # EVM address alone does not tell us which EVM chain.
+    if contract and re.fullmatch(
+        r"0x[a-fA-F0-9]{40}",
+        contract
+    ):
+
+        return "EVM"
+
+
+    return "UNKNOWN"
+
+
+# =========================================================
+# VERIFIED CHANNEL CHECK
+# =========================================================
+
+def is_verified_channel(channel):
+
+    channel = normalize_channel(
+        channel
+    )
+
+    try:
+
+        verified = get_verified_channel(
+            channel
+        )
+
+        if verified:
+
+            return True
+
+    except Exception as error:
+
+        print(
+            "❌ Verification database error for "
+            f"{channel}: "
+            f"{type(error).__name__}: {error}"
+        )
+
+    return False
 
 
 # =========================================================
@@ -659,13 +1119,14 @@ async def show_live_calls(query):
     if not calls:
 
         await query.edit_message_text(
+
             "🔥 Live Calls\n\n"
-            "No live calls are available yet.\n\n"
-            "📡 KOLPulse is ready to track new calls.",
+            "No live calls are available yet.",
+
             reply_markup=InlineKeyboardMarkup([
                 [
                     InlineKeyboardButton(
-                        "⬅️ Back to Menu",
+                        "⬅️ Back",
                         callback_data="back_menu"
                     )
                 ]
@@ -674,7 +1135,9 @@ async def show_live_calls(query):
 
         return
 
+
     text = "🔥 LIVE CALLS\n\n"
+
 
     for call in calls[:10]:
 
@@ -694,25 +1157,39 @@ async def show_live_calls(query):
             created_at,
         ) = call
 
+
         call_mc_text = (
+
             f"${call_mc:,.0f}"
+
             if call_mc is not None
+
             else "N/A"
         )
+
 
         current_mc_text = (
+
             f"${current_mc:,.0f}"
+
             if current_mc is not None
+
             else "N/A"
         )
+
 
         multiplier_text = (
+
             f"{multiplier:.2f}x"
+
             if multiplier is not None
+
             else "N/A"
         )
 
+
         text += (
+
             f"🟢 {project_name}\n"
             f"👤 {kol_username}\n"
             f"💰 Call MC: {call_mc_text}\n"
@@ -721,39 +1198,44 @@ async def show_live_calls(query):
             f"⏱️ {call_time or 'N/A'}\n\n"
         )
 
+
         if original_call_link:
 
             text += (
-                f"🔎 Call: {original_call_link}\n"
+                f"🔎 Call: "
+                f"{original_call_link}\n"
             )
+
 
         if kol_link:
 
             text += (
-                f"💍 KOL: {kol_link}\n"
+                f"💍 KOL: "
+                f"{kol_link}\n"
             )
+
 
         if project_link:
 
             text += (
-                f"🪙 Project: {project_link}\n"
+                f"🪙 Project: "
+                f"{project_link}\n"
             )
+
 
         text += "\n"
 
+
     await query.edit_message_text(
+
         text,
+
         disable_web_page_preview=False,
+
         reply_markup=InlineKeyboardMarkup([
             [
                 InlineKeyboardButton(
-                    "🔄 Refresh",
-                    callback_data="live_calls"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "⬅️ Back to Menu",
+                    "⬅️ Back",
                     callback_data="back_menu"
                 )
             ]
@@ -815,20 +1297,16 @@ async def show_kol_leaderboard(query):
     if not leaderboard:
 
         await query.edit_message_text(
+
             "📊 KOL Leaderboard\n\n"
             "No leaderboard data available yet.\n\n"
-            "Verified KOLs will appear here after "
-            "their calls are tracked.",
+            "Verified KOLs will appear here "
+            "after their calls are tracked.",
+
             reply_markup=InlineKeyboardMarkup([
                 [
                     InlineKeyboardButton(
-                        "🔄 Refresh",
-                        callback_data="leaderboard"
-                    )
-                ],
-                [
-                    InlineKeyboardButton(
-                        "⬅️ Back to Menu",
+                        "⬅️ Back",
                         callback_data="back_menu"
                     )
                 ]
@@ -837,7 +1315,11 @@ async def show_kol_leaderboard(query):
 
         return
 
-    text = "📊 <b>KOL LEADERBOARD</b>\n\n"
+
+    text = (
+        "📊 <b>KOL LEADERBOARD</b>\n\n"
+    )
+
 
     medals = [
         "🥇",
@@ -845,12 +1327,16 @@ async def show_kol_leaderboard(query):
         "🥉"
     ]
 
-    for index, row in enumerate(leaderboard):
+
+    for index, row in enumerate(
+        leaderboard
+    ):
 
         channel_username = row[0]
         total_calls = row[1] or 0
         two_x_calls = row[2] or 0
         best_multiplier = row[3] or 0
+
 
         if index < 3:
 
@@ -858,46 +1344,56 @@ async def show_kol_leaderboard(query):
 
         else:
 
-            rank = f"<b>#{index + 1}</b>"
+            rank = (
+                f"<b>#{index + 1}</b>"
+            )
+
 
         channel_link = (
             f"https://t.me/"
             f"{channel_username.lstrip('@')}"
         )
 
+
         safe_channel = html.escape(
             "@" + channel_username.lstrip("@")
         )
 
+
         text += (
+
             f'{rank} '
             f'<a href="{channel_link}">'
             f'{safe_channel}'
             f'</a>\n'
+
             f"📞 Calls: {total_calls}\n"
+
             f"🚀 2x+: {two_x_calls}\n"
-            f"🔥 Best: {best_multiplier:.2f}x\n\n"
+
+            f"🔥 Best: "
+            f"{best_multiplier:.2f}x\n\n"
         )
+
 
     text += (
         "📌 Rankings are based on tracked calls "
         "after KOL verification."
     )
 
+
     await query.edit_message_text(
+
         text,
+
         parse_mode="HTML",
+
         disable_web_page_preview=True,
+
         reply_markup=InlineKeyboardMarkup([
             [
                 InlineKeyboardButton(
-                    "🔄 Refresh",
-                    callback_data="leaderboard"
-                )
-            ],
-            [
-                InlineKeyboardButton(
-                    "⬅️ Back to Menu",
+                    "⬅️ Back",
                     callback_data="back_menu"
                 )
             ]
@@ -912,16 +1408,21 @@ async def show_kol_leaderboard(query):
 async def search_kol(query):
 
     await query.edit_message_text(
+
         "🔎 Search KOL\n\n"
-        "Send the Telegram KOL channel username or link.\n\n"
+        "Send the Telegram KOL channel username "
+        "or link.\n\n"
+
         "Example:\n"
         "@CRYPTO_RAVEN_CALL\n\n"
+
         "or\n"
         "https://t.me/CRYPTO_RAVEN_CALL",
+
         reply_markup=InlineKeyboardMarkup([
             [
                 InlineKeyboardButton(
-                    "⬅️ Back to Menu",
+                    "⬅️ Back",
                     callback_data="back_menu"
                 )
             ]
@@ -938,46 +1439,63 @@ async def show_kol_results(
     channel
 ):
 
-    verified = get_verified_channel(channel)
+    verified = get_verified_channel(
+        channel
+    )
+
 
     if not verified:
 
         await update.message.reply_text(
+
             "❌ KOL Not Verified\n\n"
             f"{channel} isn't verified on KOLPulse yet.\n\n"
-            "Please verify the channel first using\n"
-            "📡 Track My Channel.",
+            "Please verify the channel first "
+            "using 📡 Track My Channel.",
+
             reply_markup=main_menu(),
         )
 
         return
 
+
     verified_at = verified[3]
+
 
     calls = get_calls_for_kol_after_verification(
         channel,
         verified_at
     )
 
+
     if not calls:
 
         await update.message.reply_text(
+
             "🔎 KOL Search\n\n"
+
             f"📡 KOL: {channel}\n"
             "🟢 Status: Verified\n\n"
+
             "No tracked calls were found after "
             "this channel was verified.\n\n"
+
             "KOLPulse will show new tracked calls here.",
+
             reply_markup=main_menu(),
         )
 
         return
 
+
     text = (
+
         "🔎 KOL RESULTS\n\n"
+
         f"📡 KOL: {channel}\n"
         "🟢 Status: Verified\n\n"
     )
+
 
     for call in calls[:10]:
 
@@ -997,92 +1515,98 @@ async def show_kol_results(
             created_at,
         ) = call
 
+
         call_mc_text = (
+
             f"${call_mc:,.0f}"
+
             if call_mc is not None
+
             else "N/A"
         )
+
 
         current_mc_text = (
+
             f"${current_mc:,.0f}"
+
             if current_mc is not None
+
             else "N/A"
         )
+
 
         multiplier_text = (
+
             f"{multiplier:.2f}x"
+
             if multiplier is not None
+
             else "N/A"
         )
 
+
         text += (
+
             f"🟣 {project_name}\n"
-            f"💰 Call MC: {call_mc_text}\n"
-            f"📈 Current MC: {current_mc_text}\n"
-            f"🚀 Multiplier: {multiplier_text}\n"
-            f"⏱️ {call_time or 'N/A'}\n"
+
+            f"💰 Call MC: "
+            f"{call_mc_text}\n"
+
+            f"📈 Current MC: "
+            f"{current_mc_text}\n"
+
+            f"🚀 Multiplier: "
+            f"{multiplier_text}\n"
+
+            f"⏱️ "
+            f"{call_time or 'N/A'}\n"
         )
+
 
         if original_call_link:
 
             text += (
-                f"🔎 Call: {original_call_link}\n"
+                f"🔎 Call: "
+                f"{original_call_link}\n"
             )
+
 
         if project_link:
 
             text += (
-                f"🪙 Project: {project_link}\n"
+                f"🪙 Project: "
+                f"{project_link}\n"
             )
+
 
         text += "\n"
 
+
     await update.message.reply_text(
+
         text,
+
         disable_web_page_preview=False,
+
         reply_markup=main_menu(),
     )
-
-
-# =========================================================
-# VERIFIED CHANNEL CHECK
-# =========================================================
-
-def is_verified_channel(channel):
-
-    channel = normalize_channel(channel)
-
-    try:
-
-        verified = get_verified_channel(
-            channel
-        )
-
-        if verified:
-            return True
-
-    except Exception as error:
-
-        print(
-            "❌ Verification database error for "
-            f"{channel}: "
-            f"{type(error).__name__}: {error}"
-        )
-
-    return False
 
 
 # =========================================================
 # AUTOMATIC CHANNEL CALL DETECTOR
 # =========================================================
 #
-# Every approved/verified channel is monitored.
+# ALL VERIFIED / APPROVED CHANNELS
 #
-# There is NO Raven-only restriction.
+# No Raven-only restriction.
 #
-# IMPORTANT:
-# Telegram will only send channel posts to the bot from
-# channels where the bot has the required access.
+# Requirements:
+# - Bot must be Admin in tracked channel
+# - Channel must be verified in database
+# - Post must contain a detectable CA/Contract
+#
+# MC is OPTIONAL.
 #
 # =========================================================
 
@@ -1091,12 +1615,23 @@ async def channel_post_handler(
     context: ContextTypes.DEFAULT_TYPE
 ):
 
+    # -----------------------------------------------------
+    # CHANNEL POST
+    # -----------------------------------------------------
+
     message = update.channel_post
 
     if not message:
+
         return
 
+
     chat = message.chat
+
+
+    # -----------------------------------------------------
+    # PUBLIC CHANNEL REQUIRED
+    # -----------------------------------------------------
 
     if not chat.username:
 
@@ -1107,97 +1642,142 @@ async def channel_post_handler(
 
         return
 
+
     channel = normalize_channel(
         chat.username
     )
 
-    print("━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━")
+
     print(
-        f"📨 CHANNEL POST RECEIVED: {channel}"
+        "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
 
+    print(
+        f"📨 CHANNEL POST RECEIVED: "
+        f"{channel}"
+    )
+
+
+    # -----------------------------------------------------
+    # TEXT + CAPTION
+    # -----------------------------------------------------
+
     text = (
+
         message.text
+
         or message.caption
+
         or ""
     )
+
 
     if not text:
 
         print(
-            f"⏭️ Empty post ignored from {channel}"
+            f"⏭️ Empty post ignored from "
+            f"{channel}"
         )
 
         return
 
-    # =====================================================
-    # ONLY VERIFIED CHANNELS
-    # =====================================================
 
-    if not is_verified_channel(channel):
+    # -----------------------------------------------------
+    # VERIFIED CHANNEL ONLY
+    # -----------------------------------------------------
+
+    if not is_verified_channel(
+        channel
+    ):
 
         print(
-            f"⏭️ Unverified channel ignored: {channel}"
+            f"⏭️ Unverified channel ignored: "
+            f"{channel}"
         )
 
         return
 
+
     print(
-        f"✅ VERIFIED KOL DETECTED: {channel}"
+        f"✅ VERIFIED KOL DETECTED: "
+        f"{channel}"
     )
 
-    # =====================================================
-    # CONTRACT / CA
-    # =====================================================
 
-    contract = parse_contract(text)
+    # -----------------------------------------------------
+    # CONTRACT / CA
+    # -----------------------------------------------------
+
+    contract = parse_contract(
+        text
+    )
+
 
     if not contract:
 
         print(
-            f"⏭️ No Contract/CA found in {channel} post."
+            f"⏭️ No CA/Contract found "
+            f"in {channel} post."
         )
 
         return
 
+
     print(
-        f"🔗 Contract/CA detected: {contract}"
+        f"🔗 CA/Contract detected: "
+        f"{contract}"
     )
 
-    # =====================================================
-    # MARKET CAP / MC
-    # =====================================================
 
-    call_mc = parse_market_cap(text)
+    # -----------------------------------------------------
+    # MARKET CAP
+    # MC IS OPTIONAL
+    # -----------------------------------------------------
+
+    call_mc = parse_market_cap(
+        text
+    )
+
 
     if call_mc is None:
 
         print(
-            f"⏭️ Could not read MC from {channel} post."
+            f"ℹ️ MC not found in "
+            f"{channel} post."
         )
 
-        return
+        print(
+            "➡️ Call will still be tracked "
+            "with MC = N/A."
+        )
 
-    print(
-        f"💰 Market Cap detected: ${call_mc:,.0f}"
-    )
+    else:
 
-    # =====================================================
+        print(
+            f"💰 Market Cap detected: "
+            f"${call_mc:,.0f}"
+        )
+
+
+    # -----------------------------------------------------
     # PROJECT NAME
-    # =====================================================
+    # -----------------------------------------------------
 
     project_name = parse_project_name(
         text,
         contract
     )
 
+
     print(
-        f"🪙 Project detected: {project_name}"
+        f"🪙 Project detected: "
+        f"{project_name}"
     )
 
-    # =====================================================
+
+    # -----------------------------------------------------
     # TOKEN SYMBOL
-    # =====================================================
+    # -----------------------------------------------------
 
     token_symbol = detect_token_symbol(
         text,
@@ -1205,26 +1785,49 @@ async def channel_post_handler(
         contract
     )
 
+
     print(
-        f"🔮 Token detected: {token_symbol}"
+        f"🔮 Token detected: "
+        f"{token_symbol}"
     )
 
-    # =====================================================
+
+    # -----------------------------------------------------
     # CHAIN
-    # =====================================================
+    # -----------------------------------------------------
 
     chain_symbol = detect_chain_symbol(
         text,
         contract
     )
 
+
     print(
-        f"⛓️ Chain detected: {chain_symbol}"
+        f"⛓️ Chain detected: "
+        f"{chain_symbol}"
     )
 
-    # =====================================================
-    # LINKS
-    # =====================================================
+
+    # -----------------------------------------------------
+    # PROJECT LINK
+    # -----------------------------------------------------
+
+    project_link = parse_project_link(
+        text
+    )
+
+
+    if project_link:
+
+        print(
+            f"🔗 Project link detected: "
+            f"{project_link}"
+        )
+
+
+    # -----------------------------------------------------
+    # TELEGRAM LINKS
+    # -----------------------------------------------------
 
     original_call_link = (
         f"https://t.me/"
@@ -1232,32 +1835,51 @@ async def channel_post_handler(
         f"{message.message_id}"
     )
 
+
     kol_link = (
         f"https://t.me/"
         f"{chat.username}"
     )
 
-    # =====================================================
+
+    # -----------------------------------------------------
     # SAVE CALL
-    # =====================================================
+    # -----------------------------------------------------
 
     try:
 
         call_id = add_call(
+
             kol_username=channel,
+
             project_name=project_name,
+
             kol_link=kol_link,
-            project_link=None,
-            original_call_link=original_call_link,
-            call_mc=call_mc,
-            current_mc=call_mc,
-            multiplier=1,
-            call_time=datetime.utcnow().strftime(
-                "%Y-%m-%d %H:%M:%S"
+
+            project_link=project_link,
+
+            original_call_link=(
+                original_call_link
             ),
+
+            call_mc=call_mc,
+
+            current_mc=call_mc,
+
+            multiplier=1,
+
+            call_time=(
+                datetime.utcnow()
+                .strftime(
+                    "%Y-%m-%d %H:%M:%S"
+                )
+            ),
+
             video_file_id=None,
+
             status="live",
         )
+
 
         print(
             "✅ CALL DETECTED AND SAVED"
@@ -1280,12 +1902,14 @@ async def channel_post_handler(
         )
 
         print(
-            f"   Call MC: ${call_mc:,.0f}"
+            "   Call MC: "
+            f"{format_market_cap(call_mc)}"
         )
 
         print(
             f"   Call ID: {call_id}"
         )
+
 
     except Exception as error:
 
@@ -1296,9 +1920,10 @@ async def channel_post_handler(
 
         return
 
-    # =====================================================
+
+    # -----------------------------------------------------
     # SEND ALERT TO KOLPULSE LIVE
-    # =====================================================
+    # -----------------------------------------------------
 
     try:
 
@@ -1322,35 +1947,59 @@ async def channel_post_handler(
             call_mc
         )
 
+
         alert_text = (
+
             f'🔮 <a href="{kol_link}">'
-            f'{safe_channel}</a> Dropped a Call 🔮\n\n'
+            f'{safe_channel}</a> '
+            f'Dropped a Call 🔮\n\n'
 
-            f"🔮 Token Symbol   🔮 {safe_token}\n"
-            f"🔮 Current MC     🔮 {mc_display}\n"
-            f"🔮 Chain Symbol   🔮 {safe_chain}\n\n"
+            f"🔮 Token Symbol   🔮 "
+            f"{safe_token}\n"
 
-            "We've started tracking it and will continue to "
-            "send performance alerts as the token progresses. "
+            f"🔮 Current MC     🔮 "
+            f"{mc_display}\n"
+
+            f"🔮 Chain Symbol   🔮 "
+            f"{safe_chain}\n\n"
+
+            "We've started tracking it and "
+            "will continue to send performance "
+            "alerts as the token progresses. "
             "Stay tuned!\n\n"
 
-            f"Ca: <code>{safe_contract}</code>\n\n"
+            f"Ca: <code>"
+            f"{safe_contract}"
+            f"</code>\n\n"
 
-            f'🔮 <a href="{original_call_link}">CALL</a>    '
-            f'🔮 <a href="{kol_link}">KOL</a>    '
-            f'🔮 <a href="{BOT_LINK}">BOT</a>'
+            f'🔮 <a href="{original_call_link}">'
+            f'CALL</a>    '
+
+            f'🔮 <a href="{kol_link}">'
+            f'KOL</a>    '
+
+            f'🔮 <a href="{BOT_LINK}">'
+            f'BOT</a>'
         )
 
+
         await context.bot.send_message(
+
             chat_id=LIVE_CHANNEL,
+
             text=alert_text,
+
             parse_mode="HTML",
+
             disable_web_page_preview=True,
         )
 
+
         print(
-            f"✅ Alert sent to {LIVE_CHANNEL}"
+            f"✅ Alert sent to "
+            f"{LIVE_CHANNEL}"
         )
+
 
     except Exception as error:
 
@@ -1359,6 +2008,7 @@ async def channel_post_handler(
             f"{LIVE_CHANNEL}: "
             f"{type(error).__name__}: {error}"
         )
+
 
     print(
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
@@ -1375,42 +2025,9 @@ async def button_handler(
 ):
 
     query = update.callback_query
+
     data = query.data
 
-    # =====================================================
-    # LIVE CALLS
-    # =====================================================
-
-    if data == "live_calls":
-
-        await query.answer()
-
-        try:
-
-            await show_live_calls(
-                query
-            )
-
-        except Exception as error:
-
-            print(
-                f"Live Calls error: {error}"
-            )
-
-            await query.edit_message_text(
-                "⚠️ Live Calls could not be loaded.\n\n"
-                "Please try again.",
-                reply_markup=InlineKeyboardMarkup([
-                    [
-                        InlineKeyboardButton(
-                            "⬅️ Back to Menu",
-                            callback_data="back_menu"
-                        )
-                    ]
-                ]),
-            )
-
-        return
 
     # =====================================================
     # KOL LEADERBOARD
@@ -1434,12 +2051,15 @@ async def button_handler(
             )
 
             await query.edit_message_text(
-                "⚠️ KOL Leaderboard could not be loaded.\n\n"
+
+                "⚠️ KOL Leaderboard "
+                "could not be loaded.\n\n"
                 "Please try again.",
+
                 reply_markup=InlineKeyboardMarkup([
                     [
                         InlineKeyboardButton(
-                            "⬅️ Back to Menu",
+                            "⬅️ Back",
                             callback_data="back_menu"
                         )
                     ]
@@ -1447,6 +2067,7 @@ async def button_handler(
             )
 
         return
+
 
     # =====================================================
     # TRACK MY CHANNEL
@@ -1456,6 +2077,7 @@ async def button_handler(
 
         await query.answer()
 
+
         context.user_data[
             "waiting_for_channel"
         ] = False
@@ -1468,32 +2090,45 @@ async def button_handler(
             "channel_admin_check"
         ] = False
 
+
         await query.edit_message_text(
+
             "📡 Track My Channel\n\n"
+
             "Before submitting your channel, "
             "you must add our bot as an Admin:\n\n"
+
             f"🤖 {BOT_USERNAME}\n\n"
-            "Please add the bot as an Admin in "
-            "your Telegram channel.\n\n"
+
+            "Please add the bot as an Admin "
+            "in your Telegram channel.\n\n"
+
             "After you have added the bot, "
             "click the button below.",
+
             reply_markup=InlineKeyboardMarkup([
                 [
                     InlineKeyboardButton(
                         "🤖 I Added Bot as Admin",
-                        callback_data="check_bot_admin"
+                        callback_data=(
+                            "check_bot_admin"
+                        )
                     )
                 ],
+
                 [
                     InlineKeyboardButton(
-                        "⬅️ Back to Menu",
-                        callback_data="back_menu"
+                        "⬅️ Back",
+                        callback_data=(
+                            "back_menu"
+                        )
                     )
                 ]
             ]),
         )
 
         return
+
 
     # =====================================================
     # I ADDED BOT AS ADMIN
@@ -1503,6 +2138,7 @@ async def button_handler(
 
         await query.answer()
 
+
         context.user_data[
             "waiting_for_channel"
         ] = True
@@ -1515,27 +2151,38 @@ async def button_handler(
             "channel_admin_check"
         ] = True
 
+
         await query.edit_message_text(
+
             "📡 Track My Channel\n\n"
+
             "Send your Telegram channel username.\n\n"
+
             "Example:\n"
             "@MyCryptoChannel\n\n"
-            "Make sure the channel username is correct.\n\n"
+
+            "Make sure the channel username "
+            "is correct.\n\n"
+
             f"🔐 KOLPulse will verify that "
             f"{BOT_USERNAME} is an Admin in "
             "that channel before your request "
             "can be submitted.",
+
             reply_markup=InlineKeyboardMarkup([
                 [
                     InlineKeyboardButton(
-                        "⬅️ Back to Menu",
-                        callback_data="back_menu"
+                        "⬅️ Back",
+                        callback_data=(
+                            "back_menu"
+                        )
                     )
                 ]
             ]),
         )
 
         return
+
 
     # =====================================================
     # SEARCH KOL
@@ -1545,6 +2192,7 @@ async def button_handler(
 
         await query.answer()
 
+
         context.user_data[
             "waiting_for_channel"
         ] = False
@@ -1553,11 +2201,13 @@ async def button_handler(
             "waiting_for_kol_search"
         ] = True
 
+
         await search_kol(
             query
         )
 
         return
+
 
     # =====================================================
     # BACK TO MENU
@@ -1566,6 +2216,7 @@ async def button_handler(
     if data == "back_menu":
 
         await query.answer()
+
 
         context.user_data[
             "waiting_for_channel"
@@ -1579,29 +2230,39 @@ async def button_handler(
             "channel_admin_check"
         ] = False
 
+
         await query.edit_message_text(
+
             "⚡ KOLPulse Main Menu\n\n"
             "Choose an option below:",
+
             reply_markup=main_menu(),
         )
 
         return
 
+
     # =====================================================
     # ACCEPT REQUEST
     # =====================================================
 
-    if data.startswith("accept:"):
+    if data.startswith(
+        "accept:"
+    ):
 
         await query.answer()
+
 
         parts = data.split(
             ":",
             2
         )
 
+
         if len(parts) != 3:
+
             return
+
 
         try:
 
@@ -1613,9 +2274,11 @@ async def button_handler(
 
             return
 
+
         channel = normalize_channel(
             parts[2]
         )
+
 
         if str(
             query.message.chat.id
@@ -1628,16 +2291,20 @@ async def button_handler(
 
             return
 
+
         # -------------------------------------------------
         # ADMIN CHECK
         # -------------------------------------------------
 
         try:
 
-            member = await context.bot.get_chat_member(
-                chat_id=query.message.chat.id,
-                user_id=query.from_user.id,
+            member = (
+                await context.bot.get_chat_member(
+                    chat_id=query.message.chat.id,
+                    user_id=query.from_user.id,
+                )
             )
+
 
             if member.status not in [
                 "administrator",
@@ -1650,6 +2317,7 @@ async def button_handler(
                 )
 
                 return
+
 
         except Exception as error:
 
@@ -1664,15 +2332,19 @@ async def button_handler(
 
             return
 
+
         # -------------------------------------------------
         # PREVENT DUPLICATE APPROVAL
         # -------------------------------------------------
 
         try:
 
-            existing_verified = get_verified_channel(
-                channel
+            existing_verified = (
+                get_verified_channel(
+                    channel
+                )
             )
+
 
             if existing_verified:
 
@@ -1681,20 +2353,26 @@ async def button_handler(
                     "approved"
                 )
 
+
                 await query.edit_message_text(
+
                     "📡 CHANNEL TRACKING REQUEST\n\n"
+
                     f"📺 Channel: {channel}\n\n"
+
                     "🟢 STATUS: ALREADY APPROVED"
                 )
 
                 return
 
+
         except Exception as error:
 
             print(
-                "Existing verification check error: "
-                f"{error}"
+                "Existing verification "
+                f"check error: {error}"
             )
+
 
         # -------------------------------------------------
         # SAVE VERIFIED CHANNEL
@@ -1702,20 +2380,25 @@ async def button_handler(
 
         try:
 
-            verified_at = add_verified_channel(
-                channel_username=channel,
-                user_id=user_id,
+            verified_at = (
+                add_verified_channel(
+                    channel_username=channel,
+                    user_id=user_id,
+                )
             )
+
 
             update_request_status(
                 channel,
                 "approved"
             )
 
+
             print(
                 "✅ Verified channel saved: "
                 f"{channel} at {verified_at}"
             )
+
 
         except Exception as error:
 
@@ -1731,6 +2414,7 @@ async def button_handler(
 
             return
 
+
         # -------------------------------------------------
         # NOTIFY USER
         # -------------------------------------------------
@@ -1738,21 +2422,30 @@ async def button_handler(
         try:
 
             await context.bot.send_message(
+
                 chat_id=user_id,
+
                 text=(
+
                     "✅ Channel Approved!\n\n"
+
                     f"📡 Channel: {channel}\n\n"
-                    "Your channel has been verified on "
-                    "KOLPulse.\n\n"
-                    "🔎 Your KOL results can now be tracked."
+
+                    "Your channel has been verified "
+                    "on KOLPulse.\n\n"
+
+                    "🔎 New KOL calls will now be "
+                    "automatically tracked."
                 ),
             )
+
 
         except Exception as error:
 
             print(
                 f"Could not notify user: {error}"
             )
+
 
         # -------------------------------------------------
         # ADMIN NAME
@@ -1770,12 +2463,18 @@ async def button_handler(
                 query.from_user.full_name
             )
 
+
         approved_text = (
+
             "📡 CHANNEL TRACKING REQUEST\n\n"
+
             f"📺 Channel: {channel}\n\n"
+
             "🟢 STATUS: APPROVED\n\n"
+
             f"👮 Approved by: {admin_name}"
         )
+
 
         try:
 
@@ -1786,26 +2485,34 @@ async def button_handler(
         except Exception as error:
 
             print(
-                f"Could not update group message: {error}"
+                f"Could not update group message: "
+                f"{error}"
             )
 
         return
+
 
     # =====================================================
     # REJECT REQUEST
     # =====================================================
 
-    if data.startswith("reject:"):
+    if data.startswith(
+        "reject:"
+    ):
 
         await query.answer()
+
 
         parts = data.split(
             ":",
             2
         )
 
+
         if len(parts) != 3:
+
             return
+
 
         try:
 
@@ -1817,9 +2524,11 @@ async def button_handler(
 
             return
 
+
         channel = normalize_channel(
             parts[2]
         )
+
 
         if str(
             query.message.chat.id
@@ -1832,16 +2541,20 @@ async def button_handler(
 
             return
 
+
         # -------------------------------------------------
         # ADMIN CHECK
         # -------------------------------------------------
 
         try:
 
-            member = await context.bot.get_chat_member(
-                chat_id=query.message.chat.id,
-                user_id=query.from_user.id,
+            member = (
+                await context.bot.get_chat_member(
+                    chat_id=query.message.chat.id,
+                    user_id=query.from_user.id,
+                )
             )
+
 
             if member.status not in [
                 "administrator",
@@ -1855,6 +2568,7 @@ async def button_handler(
 
                 return
 
+
         except Exception as error:
 
             print(
@@ -1867,6 +2581,7 @@ async def button_handler(
             )
 
             return
+
 
         # -------------------------------------------------
         # UPDATE REJECTED STATUS
@@ -1886,6 +2601,7 @@ async def button_handler(
                 f"{error}"
             )
 
+
         # -------------------------------------------------
         # NOTIFY USER
         # -------------------------------------------------
@@ -1893,13 +2609,20 @@ async def button_handler(
         try:
 
             await context.bot.send_message(
+
                 chat_id=user_id,
+
                 text=(
+
                     "❌ Channel Request Rejected\n\n"
+
                     f"📡 Channel: {channel}\n\n"
-                    "Your tracking request was rejected by "
-                    "KOLPulse.\n\n"
-                    "You can submit the channel again if needed."
+
+                    "Your tracking request was rejected "
+                    "by KOLPulse.\n\n"
+
+                    "You can submit the channel again "
+                    "if needed."
                 ),
             )
 
@@ -1909,11 +2632,16 @@ async def button_handler(
                 f"Could not notify user: {error}"
             )
 
+
         rejected_text = (
+
             "📡 CHANNEL TRACKING REQUEST\n\n"
+
             f"📺 Channel: {channel}\n\n"
+
             "🔴 STATUS: REJECTED"
         )
+
 
         try:
 
@@ -1924,42 +2652,89 @@ async def button_handler(
         except Exception as error:
 
             print(
-                f"Could not update rejected message: {error}"
+                "Could not update rejected message: "
+                f"{error}"
             )
 
         return
 
+
     # =====================================================
-    # OTHER MENU OPTIONS
+    # TOP KOLS
+    # =====================================================
+
+    if data == "top_kols":
+
+        await query.answer()
+
+        await query.edit_message_text(
+
+            "🏆 Top KOLs\n\n"
+
+            "Top performing verified KOLs "
+            "will appear here.\n\n"
+
+            "KOLPulse is tracking calls "
+            "automatically.",
+
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "⬅️ Back",
+                        callback_data=(
+                            "back_menu"
+                        )
+                    )
+                ]
+            ]),
+        )
+
+        return
+
+
+    # =====================================================
+    # SUPPORT
+    # =====================================================
+
+    if data == "support":
+
+        await query.answer()
+
+        await query.edit_message_text(
+
+            "🆘 KOLPulse Support\n\n"
+
+            "Need help with verification, "
+            "tracking or your KOL channel?\n\n"
+
+            "Contact:\n"
+            "@ZENITP2P",
+
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "⬅️ Back",
+                        callback_data=(
+                            "back_menu"
+                        )
+                    )
+                ]
+            ]),
+        )
+
+        return
+
+
+    # =====================================================
+    # UNKNOWN
     # =====================================================
 
     await query.answer()
 
-    responses = {
-
-        "performance":
-            "📈 Call Performance\n\n"
-            "Individual call performance will appear here.",
-
-        "top_kols":
-            "🏆 Top KOLs\n\n"
-            "Top performing KOLs will appear here.",
-
-        "about":
-            "ℹ️ KOLPulse\n\n"
-            "KOLPulse tracks Telegram KOL calls and provides "
-            "performance, ROI and leaderboard data.",
-
-        "support":
-            "🆘 Support\n\n"
-            "Contact: @ZENITP2P",
-    }
-
     await query.edit_message_text(
-        responses.get(
-            data,
-            "Unknown option."
-        ),
+
+        "⚠️ Unknown option.",
+
         reply_markup=main_menu(),
     )
 
@@ -1977,30 +2752,46 @@ async def verify_bot_is_channel_admin(
         channel
     )
 
+
     try:
 
         chat = await context.bot.get_chat(
             channel
         )
 
-        bot_member = await context.bot.get_chat_member(
-            chat_id=chat.id,
-            user_id=context.bot.id
+
+        bot_member = (
+            await context.bot.get_chat_member(
+                chat_id=chat.id,
+                user_id=context.bot.id
+            )
         )
+
 
         print(
             f"🔐 Bot status in {channel}: "
             f"{bot_member.status}"
         )
 
+
         if bot_member.status in [
             "administrator",
             "creator"
         ]:
 
-            return True, chat, bot_member.status
+            return (
+                True,
+                chat,
+                bot_member.status
+            )
 
-        return False, chat, bot_member.status
+
+        return (
+            False,
+            chat,
+            bot_member.status
+        )
+
 
     except Exception as error:
 
@@ -2010,7 +2801,12 @@ async def verify_bot_is_channel_admin(
             f"{type(error).__name__}: {error}"
         )
 
-        return False, None, None
+
+        return (
+            False,
+            None,
+            None
+        )
 
 
 # =========================================================
@@ -2023,12 +2819,19 @@ async def channel_message(
 ):
 
     if not update.message:
+
         return
+
 
     if not update.message.text:
+
         return
 
-    message_text = update.message.text.strip()
+
+    message_text = (
+        update.message.text.strip()
+    )
+
 
     # =====================================================
     # SEARCH KOL
@@ -2042,9 +2845,11 @@ async def channel_message(
             message_text
         )
 
+
         context.user_data[
             "waiting_for_kol_search"
         ] = False
+
 
         await show_kol_results(
             update,
@@ -2052,6 +2857,7 @@ async def channel_message(
         )
 
         return
+
 
     # =====================================================
     # TRACK MY CHANNEL
@@ -2063,21 +2869,26 @@ async def channel_message(
 
         return
 
+
     channel = normalize_channel(
         message_text
     )
 
+
     context.user_data[
         "waiting_for_channel"
     ] = False
+
 
     # =====================================================
     # VERIFY BOT ADMIN
     # =====================================================
 
     print(
-        f"🔐 Checking bot Admin access in {channel}..."
+        f"🔐 Checking bot Admin access "
+        f"in {channel}..."
     )
+
 
     (
         bot_is_admin,
@@ -2088,32 +2899,45 @@ async def channel_message(
         channel
     )
 
+
     if not bot_is_admin:
 
         context.user_data[
             "waiting_for_channel"
         ] = True
 
+
         await update.message.reply_text(
+
             "❌ Bot Is Not Admin Yet\n\n"
+
             f"📡 Channel: {channel}\n\n"
-            f"Please add:\n"
+
+            "Please add:\n"
             f"🤖 {BOT_USERNAME}\n\n"
+
             "as an Admin in your Telegram channel.\n\n"
+
             "After adding the bot as Admin, "
             "send your channel username again.\n\n"
+
             "⚠️ Your request has NOT been submitted.",
+
             reply_markup=InlineKeyboardMarkup([
                 [
                     InlineKeyboardButton(
                         "🤖 I Added Bot as Admin",
-                        callback_data="check_bot_admin"
+                        callback_data=(
+                            "check_bot_admin"
+                        )
                     )
                 ],
                 [
                     InlineKeyboardButton(
-                        "⬅️ Back to Menu",
-                        callback_data="back_menu"
+                        "⬅️ Back",
+                        callback_data=(
+                            "back_menu"
+                        )
                     )
                 ]
             ]),
@@ -2121,13 +2945,16 @@ async def channel_message(
 
         return
 
+
     # =====================================================
     # BOT IS ADMIN
     # =====================================================
 
     print(
-        f"✅ KOLPulse bot is Admin in {channel}"
+        f"✅ KOLPulse bot is Admin in "
+        f"{channel}"
     )
+
 
     # =====================================================
     # CHECK REQUEST STATUS
@@ -2139,6 +2966,7 @@ async def channel_message(
             channel
         )
 
+
     except Exception as error:
 
         print(
@@ -2146,13 +2974,18 @@ async def channel_message(
             f"{type(error).__name__}: {error}"
         )
 
+
         await update.message.reply_text(
-            "⚠️ Could not check your channel status.\n\n"
+
+            "⚠️ Could not check your "
+            "channel status.\n\n"
             "Please try again in a moment.",
+
             reply_markup=main_menu(),
         )
 
         return
+
 
     # =====================================================
     # ALREADY APPROVED
@@ -2161,14 +2994,21 @@ async def channel_message(
     if status == "approved":
 
         await update.message.reply_text(
+
             "✅ Channel Already Approved!\n\n"
+
             f"📡 Channel: {channel}\n\n"
-            "Your channel is already verified on KOLPulse.\n\n"
-            "🔎 Your KOL results can already be tracked.",
+
+            "Your channel is already verified "
+            "on KOLPulse.\n\n"
+
+            "🔎 New calls can already be tracked.",
+
             reply_markup=main_menu(),
         )
 
         return
+
 
     # =====================================================
     # ALREADY PENDING
@@ -2177,21 +3017,28 @@ async def channel_message(
     if status == "pending":
 
         await update.message.reply_text(
+
             "⏳ Channel Already Pending!\n\n"
+
             f"📡 Channel: {channel}\n\n"
-            "Your tracking request is already waiting "
-            "for admin approval.\n\n"
+
+            "Your tracking request is already "
+            "waiting for admin approval.\n\n"
+
             "Please wait for the admin decision.",
+
             reply_markup=main_menu(),
         )
 
         return
+
 
     # =====================================================
     # USER INFORMATION
     # =====================================================
 
     user = update.effective_user
+
 
     if user.username:
 
@@ -2205,7 +3052,9 @@ async def channel_message(
             user.full_name
         )
 
+
     user_id = user.id
+
 
     # =====================================================
     # SAVE AS PENDING
@@ -2218,17 +3067,23 @@ async def channel_message(
             user_id
         )
 
+
         if not created:
 
             await update.message.reply_text(
+
                 "⏳ Channel Already Pending!\n\n"
+
                 f"📡 Channel: {channel}\n\n"
-                "Your tracking request is already waiting "
-                "for admin approval.",
+
+                "Your tracking request is already "
+                "waiting for admin approval.",
+
                 reply_markup=main_menu(),
             )
 
             return
+
 
     except Exception as error:
 
@@ -2237,35 +3092,51 @@ async def channel_message(
             f"{type(error).__name__}: {error}"
         )
 
+
         await update.message.reply_text(
-            "⚠️ Could not create your tracking request.\n\n"
+
+            "⚠️ Could not create your "
+            "tracking request.\n\n"
             "Please try again.",
+
             reply_markup=main_menu(),
         )
 
         return
 
+
     current_time = datetime.now().strftime(
         "%Y-%m-%d %H:%M:%S"
     )
+
 
     # =====================================================
     # ADMIN GROUP NOTIFICATION
     # =====================================================
 
     notification = (
+
         "📡 NEW CHANNEL TRACKING REQUEST\n\n"
+
         f"👤 User: {user_display}\n"
+
         f"🆔 Telegram ID: {user_id}\n\n"
+
         f"📺 Channel: {channel}\n"
+
         f"🔗 Link: https://t.me/"
         f"{channel.lstrip('@')}\n\n"
+
         "🤖 Bot Admin: ✅ Verified\n"
+
         f"⏰ Time: {current_time}\n\n"
+
         "👇 Admin action required:"
     )
 
+
     group_sent = False
+
 
     if GROUP_CHAT_ID:
 
@@ -2275,21 +3146,30 @@ async def channel_message(
                 GROUP_CHAT_ID
             )
 
+
             await context.bot.send_message(
+
                 chat_id=group_chat_id,
+
                 text=notification,
+
                 reply_markup=request_buttons(
                     user_id,
                     channel
                 ),
+
                 disable_web_page_preview=True,
             )
 
+
             group_sent = True
 
+
             print(
-                "✅ Group notification sent successfully."
+                "✅ Group notification "
+                "sent successfully."
             )
+
 
         except Exception as error:
 
@@ -2298,11 +3178,13 @@ async def channel_message(
                 f"{type(error).__name__}: {error}"
             )
 
+
     else:
 
         print(
             "❌ GROUP_CHAT_ID secret is empty."
         )
+
 
     # =====================================================
     # USER CONFIRMATION
@@ -2311,28 +3193,43 @@ async def channel_message(
     if group_sent:
 
         confirmation = (
+
             "📡 Channel Submitted Successfully!\n\n"
+
             f"📺 Channel: {channel}\n"
+
             "🤖 Bot Admin: ✅ Verified\n\n"
+
             "⏳ Status: Pending Admin Approval\n\n"
-            "Your tracking request has been sent "
-            "to KOLPulse.\n\n"
+
+            "Your tracking request has been "
+            "sent to KOLPulse.\n\n"
+
             "Please wait for the admin decision."
         )
+
 
     else:
 
         confirmation = (
+
             "⚠️ Channel received!\n\n"
+
             f"📡 Channel: {channel}\n"
+
             "🤖 Bot Admin: ✅ Verified\n\n"
-            "Your request was saved, but the admin "
-            "notification could not be sent.\n\n"
+
+            "Your request was saved, but the "
+            "admin notification could not be sent.\n\n"
+
             "Please contact support."
         )
 
+
     await update.message.reply_text(
+
         confirmation,
+
         reply_markup=main_menu(),
     )
 
@@ -2349,47 +3246,78 @@ def main():
             "BOT_TOKEN is not configured."
         )
 
+
     if not GROUP_CHAT_ID:
 
         raise ValueError(
             "GROUP_CHAT_ID is not configured."
         )
 
+
+    # -----------------------------------------------------
+    # DATABASE
+    # -----------------------------------------------------
+
     init_database()
 
     ensure_tracking_requests_table()
+
 
     print(
         "🚀 KOLPulse Bot starting..."
     )
 
+
     print(
         f"📡 Admin Group: {GROUP_CHAT_ID}"
     )
 
+
     print(
-        "📡 Monitoring: ALL VERIFIED / APPROVED CHANNELS"
+        "📡 Monitoring: "
+        "ALL VERIFIED / APPROVED CHANNELS"
     )
+
 
     print(
         "📡 Raven-only restriction: DISABLED"
     )
 
+
     print(
         f"🤖 Bot: {BOT_USERNAME}"
     )
 
+
     print(
-        f"📡 Live Destination: {LIVE_CHANNEL}"
+        f"📡 Live Destination: "
+        f"{LIVE_CHANNEL}"
     )
+
 
     print(
         "🔐 Channel Admin verification enabled."
     )
 
+
     print(
-        "🧠 Flexible Contract/CA + MC parser enabled."
+        "🧠 Flexible CA/Contract parser enabled."
     )
+
+
+    print(
+        "💰 MC is OPTIONAL for call detection."
+    )
+
+
+    print(
+        "🔗 Project link detection enabled."
+    )
+
+
+    # -----------------------------------------------------
+    # APPLICATION
+    # -----------------------------------------------------
 
     app = (
         Application
@@ -2397,6 +3325,7 @@ def main():
         .token(BOT_TOKEN)
         .build()
     )
+
 
     # =====================================================
     # COMMANDS
@@ -2409,12 +3338,14 @@ def main():
         )
     )
 
+
     app.add_handler(
         CommandHandler(
             "groupid",
             groupid
         )
     )
+
 
     # =====================================================
     # CALLBACK BUTTONS
@@ -2425,6 +3356,7 @@ def main():
             button_handler
         )
     )
+
 
     # =====================================================
     # CHANNEL POSTS
@@ -2437,6 +3369,7 @@ def main():
         )
     )
 
+
     # =====================================================
     # TEXT MESSAGES
     # =====================================================
@@ -2448,13 +3381,16 @@ def main():
         )
     )
 
+
     print(
         "✅ KOLPulse Bot is now running..."
     )
 
+
     print(
         "⏳ Polling Telegram..."
     )
+
 
     app.run_polling(
         drop_pending_updates=False
@@ -2466,4 +3402,5 @@ def main():
 # =========================================================
 
 if __name__ == "__main__":
+
     main() 
