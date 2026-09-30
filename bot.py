@@ -8,6 +8,7 @@ from telegram import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
 )
+
 from telegram.ext import (
     Application,
     CommandHandler,
@@ -28,11 +29,14 @@ from database import (
 )
 
 
+# =========================================================
+# CONFIG
+# =========================================================
+
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID", "").strip()
 
 LIVE_CHANNEL = "@KOLPulse_Live"
-RAVEN_CHANNEL = "@CRYPTO_RAVEN_CALL"
 BOT_LINK = "https://t.me/KOLPulse_Live_bot"
 
 
@@ -57,12 +61,10 @@ def normalize_channel(channel):
 
 def ensure_tracking_requests_table():
     """
-    Stores Track My Channel requests so the bot can distinguish:
-    PENDING -> APPROVED -> REJECTED.
-
-    This is separate from verified_channels so existing database.py
-    does not need to be changed just to track pending requests.
+    Stores Track My Channel requests:
+    pending -> approved -> rejected
     """
+
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -83,10 +85,11 @@ def ensure_tracking_requests_table():
 
 def get_request_status(channel):
     """Return pending/approved/rejected/None."""
+
     channel = normalize_channel(channel)
     clean = channel.lstrip("@").lower()
 
-    # Approved channels are determined by verified_channels.
+    # Approved channels come from verified_channels.
     try:
         verified = get_verified_channel(channel)
 
@@ -94,12 +97,12 @@ def get_request_status(channel):
             return "approved"
 
     except Exception as error:
+
         print(
             f"⚠️ get_verified_channel check failed: "
             f"{type(error).__name__}: {error}"
         )
 
-    # Pending/rejected state is stored in our request table.
     conn = get_connection()
     cursor = conn.cursor()
 
@@ -112,6 +115,7 @@ def get_request_status(channel):
     """, (clean,))
 
     row = cursor.fetchone()
+
     conn.close()
 
     if not row:
@@ -122,13 +126,13 @@ def get_request_status(channel):
 
 def save_pending_request(channel, user_id):
     """Create or refresh a pending request."""
+
     channel = normalize_channel(channel)
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
     conn = get_connection()
     cursor = conn.cursor()
 
-    # If a rejected request exists, allow a fresh request.
     cursor.execute("""
         SELECT id, status
         FROM channel_tracking_requests
@@ -140,10 +144,13 @@ def save_pending_request(channel, user_id):
     row = cursor.fetchone()
 
     if row:
+
         request_id, status = row
 
         if status == "pending":
+
             conn.close()
+
             return False
 
         cursor.execute("""
@@ -152,9 +159,14 @@ def save_pending_request(channel, user_id):
                 status = 'pending',
                 updated_at = ?
             WHERE id = ?
-        """, (user_id, now, request_id))
+        """, (
+            user_id,
+            now,
+            request_id,
+        ))
 
     else:
+
         cursor.execute("""
             INSERT INTO channel_tracking_requests
             (
@@ -180,6 +192,7 @@ def save_pending_request(channel, user_id):
 
 def update_request_status(channel, status):
     """Update the local request record."""
+
     channel = normalize_channel(channel)
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
 
@@ -376,6 +389,94 @@ def detect_token_symbol(
 
 
 # =========================================================
+# CALL PARSERS
+# =========================================================
+
+def parse_contract(text):
+
+    for line in text.splitlines():
+
+        if "contract:" in line.lower():
+
+            return line.split(
+                ":",
+                1
+            )[1].strip()
+
+    return None
+
+
+def parse_market_cap(text):
+
+    for line in text.splitlines():
+
+        if "market cap:" not in line.lower():
+            continue
+
+        mc_text = line.split(
+            ":",
+            1
+        )[1].strip()
+
+        mc_text = (
+            mc_text
+            .replace("$", "")
+            .replace(",", "")
+            .strip()
+        )
+
+        try:
+
+            lower = mc_text.lower()
+
+            if lower.endswith("k"):
+
+                return (
+                    float(lower[:-1])
+                    * 1_000
+                )
+
+            if lower.endswith("m"):
+
+                return (
+                    float(lower[:-1])
+                    * 1_000_000
+                )
+
+            if lower.endswith("b"):
+
+                return (
+                    float(lower[:-1])
+                    * 1_000_000_000
+                )
+
+            return float(mc_text)
+
+        except ValueError:
+
+            return None
+
+    return None
+
+
+def parse_project_name(text, contract):
+
+    for line in text.splitlines():
+
+        if line.lower().startswith("name:"):
+
+            project_name = line.split(
+                ":",
+                1
+            )[1].strip()
+
+            if project_name:
+                return project_name
+
+    return contract[:12]
+
+
+# =========================================================
 # LIVE CALLS
 # =========================================================
 
@@ -449,16 +550,19 @@ async def show_live_calls(query):
         )
 
         if original_call_link:
+
             text += (
                 f"🔎 Call: {original_call_link}\n"
             )
 
         if kol_link:
+
             text += (
                 f"💍 KOL: {kol_link}\n"
             )
 
         if project_link:
+
             text += (
                 f"🪙 Project: {project_link}\n"
             )
@@ -526,7 +630,9 @@ def get_kol_leaderboard():
     conn.close()
 
     return results
-    # =========================================================
+
+
+# =========================================================
 # SHOW KOL LEADERBOARD
 # =========================================================
 
@@ -575,8 +681,11 @@ async def show_kol_leaderboard(query):
         best_multiplier = row[3] or 0
 
         if index < 3:
+
             rank = medals[index]
+
         else:
+
             rank = f"<b>#{index + 1}</b>"
 
         channel_link = (
@@ -743,11 +852,13 @@ async def show_kol_results(
         )
 
         if original_call_link:
+
             text += (
                 f"🔎 Call: {original_call_link}\n"
             )
 
         if project_link:
+
             text += (
                 f"🪙 Project: {project_link}\n"
             )
@@ -764,6 +875,29 @@ async def show_kol_results(
 # =========================================================
 # AUTOMATIC CHANNEL CALL DETECTOR
 # =========================================================
+#
+# IMPORTANT:
+# Every approved/verified channel is monitored.
+#
+# There is NO Raven-only restriction here.
+#
+# Flow:
+#
+# Telegram Channel Post
+#        ↓
+# Detect Channel
+#        ↓
+# Check verified_channels
+#        ↓
+# Approved?
+#        ↓
+# Detect Contract + Market Cap
+#        ↓
+# Save Call
+#        ↓
+# Send Alert to KOLPulse Live
+#
+# =========================================================
 
 async def channel_post_handler(
     update: Update,
@@ -777,6 +911,8 @@ async def channel_post_handler(
 
     chat = message.chat
 
+    # Public username is required because the system
+    # uses the username for verification and links.
     if not chat.username:
 
         print(
@@ -806,16 +942,32 @@ async def channel_post_handler(
 
         return
 
-    if channel.lower() != RAVEN_CHANNEL.lower():
+    # =====================================================
+    # VERIFY CHANNEL
+    # =====================================================
+    #
+    # This is the important change.
+    #
+    # The bot no longer checks:
+    # @CRYPTO_RAVEN_CALL
+    #
+    # Instead it checks whether THIS channel is approved
+    # in the verified_channels database.
+    #
+    # =====================================================
+
+    try:
+
+        verified = get_verified_channel(channel)
+
+    except Exception as error:
 
         print(
-            f"⏭️ Channel is not configured for tracking: "
-            f"{channel}"
+            f"❌ Could not check verification for {channel}: "
+            f"{type(error).__name__}: {error}"
         )
 
         return
-
-    verified = get_verified_channel(channel)
 
     if not verified:
 
@@ -829,18 +981,11 @@ async def channel_post_handler(
         f"✅ Verified KOL detected: {channel}"
     )
 
-    contract = None
+    # =====================================================
+    # CONTRACT
+    # =====================================================
 
-    for line in text.splitlines():
-
-        if "contract:" in line.lower():
-
-            contract = line.split(
-                ":",
-                1
-            )[1].strip()
-
-            break
+    contract = parse_contract(text)
 
     if not contract:
 
@@ -850,56 +995,11 @@ async def channel_post_handler(
 
         return
 
-    call_mc = None
+    # =====================================================
+    # MARKET CAP
+    # =====================================================
 
-    for line in text.splitlines():
-
-        if "market cap:" in line.lower():
-
-            mc_text = line.split(
-                ":",
-                1
-            )[1].strip()
-
-            mc_text = (
-                mc_text
-                .replace("$", "")
-                .replace(",", "")
-                .strip()
-            )
-
-            try:
-
-                if mc_text.lower().endswith("k"):
-
-                    call_mc = (
-                        float(mc_text[:-1])
-                        * 1_000
-                    )
-
-                elif mc_text.lower().endswith("m"):
-
-                    call_mc = (
-                        float(mc_text[:-1])
-                        * 1_000_000
-                    )
-
-                elif mc_text.lower().endswith("b"):
-
-                    call_mc = (
-                        float(mc_text[:-1])
-                        * 1_000_000_000
-                    )
-
-                else:
-
-                    call_mc = float(mc_text)
-
-            except ValueError:
-
-                call_mc = None
-
-            break
+    call_mc = parse_market_cap(text)
 
     if call_mc is None:
 
@@ -910,28 +1010,28 @@ async def channel_post_handler(
 
         return
 
-    project_name = None
+    # =====================================================
+    # PROJECT NAME
+    # =====================================================
 
-    for line in text.splitlines():
+    project_name = parse_project_name(
+        text,
+        contract
+    )
 
-        if line.lower().startswith("name:"):
-
-            project_name = line.split(
-                ":",
-                1
-            )[1].strip()
-
-            break
-
-    if not project_name:
-
-        project_name = contract[:12]
+    # =====================================================
+    # TOKEN SYMBOL
+    # =====================================================
 
     token_symbol = detect_token_symbol(
         text,
         project_name,
         contract
     )
+
+    # =====================================================
+    # LINKS
+    # =====================================================
 
     original_call_link = (
         f"https://t.me/"
@@ -943,6 +1043,10 @@ async def channel_post_handler(
         f"https://t.me/"
         f"{chat.username}"
     )
+
+    # =====================================================
+    # SAVE CALL
+    # =====================================================
 
     try:
 
@@ -980,6 +1084,10 @@ async def channel_post_handler(
         )
 
         return
+
+    # =====================================================
+    # SEND ALERT TO KOLPULSE LIVE
+    # =====================================================
 
     try:
 
@@ -1027,7 +1135,9 @@ async def channel_post_handler(
             "❌ Could not send formatted alert: "
             f"{type(error).__name__}: {error}"
         )
-        # =========================================================
+
+
+# =========================================================
 # BUTTON HANDLER
 # =========================================================
 
@@ -1087,7 +1197,8 @@ async def button_handler(
         except Exception as error:
 
             print(
-                f"Leaderboard error: {type(error).__name__}: {error}"
+                f"Leaderboard error: "
+                f"{type(error).__name__}: {error}"
             )
 
             await query.edit_message_text(
@@ -1113,8 +1224,13 @@ async def button_handler(
 
         await query.answer()
 
-        context.user_data["waiting_for_channel"] = True
-        context.user_data["waiting_for_kol_search"] = False
+        context.user_data[
+            "waiting_for_channel"
+        ] = True
+
+        context.user_data[
+            "waiting_for_kol_search"
+        ] = False
 
         await query.edit_message_text(
             "📡 Track My Channel\n\n"
@@ -1142,8 +1258,13 @@ async def button_handler(
 
         await query.answer()
 
-        context.user_data["waiting_for_channel"] = False
-        context.user_data["waiting_for_kol_search"] = True
+        context.user_data[
+            "waiting_for_channel"
+        ] = False
+
+        context.user_data[
+            "waiting_for_kol_search"
+        ] = True
 
         await search_kol(query)
 
@@ -1157,8 +1278,13 @@ async def button_handler(
 
         await query.answer()
 
-        context.user_data["waiting_for_channel"] = False
-        context.user_data["waiting_for_kol_search"] = False
+        context.user_data[
+            "waiting_for_channel"
+        ] = False
+
+        context.user_data[
+            "waiting_for_kol_search"
+        ] = False
 
         await query.edit_message_text(
             "⚡ KOLPulse Main Menu\n\n"
@@ -1189,7 +1315,9 @@ async def button_handler(
 
             return
 
-        channel = normalize_channel(parts[2])
+        channel = normalize_channel(
+            parts[2]
+        )
 
         if str(query.message.chat.id) != GROUP_CHAT_ID:
 
@@ -1199,6 +1327,10 @@ async def button_handler(
             )
 
             return
+
+        # =================================================
+        # ADMIN CHECK
+        # =================================================
 
         try:
 
@@ -1232,10 +1364,15 @@ async def button_handler(
 
             return
 
-        # Prevent duplicate approval.
+        # =================================================
+        # PREVENT DUPLICATE APPROVAL
+        # =================================================
+
         try:
 
-            existing_verified = get_verified_channel(channel)
+            existing_verified = get_verified_channel(
+                channel
+            )
 
             if existing_verified:
 
@@ -1255,7 +1392,8 @@ async def button_handler(
         except Exception as error:
 
             print(
-                f"Existing verification check error: {error}"
+                f"Existing verification check error: "
+                f"{error}"
             )
 
         # =================================================
@@ -1316,6 +1454,10 @@ async def button_handler(
                 f"Could not notify user: {error}"
             )
 
+        # =================================================
+        # ADMIN NAME
+        # =================================================
+
         if query.from_user.username:
 
             admin_name = (
@@ -1344,7 +1486,8 @@ async def button_handler(
         except Exception as error:
 
             print(
-                f"Could not update group message: {error}"
+                f"Could not update group message: "
+                f"{error}"
             )
 
         return
@@ -1370,7 +1513,9 @@ async def button_handler(
 
             return
 
-        channel = normalize_channel(parts[2])
+        channel = normalize_channel(
+            parts[2]
+        )
 
         if str(query.message.chat.id) != GROUP_CHAT_ID:
 
@@ -1380,6 +1525,10 @@ async def button_handler(
             )
 
             return
+
+        # =================================================
+        # ADMIN CHECK
+        # =================================================
 
         try:
 
@@ -1413,6 +1562,10 @@ async def button_handler(
 
             return
 
+        # =================================================
+        # UPDATE REJECTED STATUS
+        # =================================================
+
         try:
 
             update_request_status(
@@ -1423,8 +1576,13 @@ async def button_handler(
         except Exception as error:
 
             print(
-                f"Could not update rejected status: {error}"
+                f"Could not update rejected status: "
+                f"{error}"
             )
+
+        # =================================================
+        # NOTIFY USER
+        # =================================================
 
         try:
 
@@ -1433,7 +1591,8 @@ async def button_handler(
                 text=(
                     "❌ Channel Request Rejected\n\n"
                     f"📡 Channel: {channel}\n\n"
-                    "Your tracking request was rejected by KOLPulse.\n\n"
+                    "Your tracking request was rejected by "
+                    "KOLPulse.\n\n"
                     "You can submit the channel again if needed."
                 ),
             )
@@ -1459,7 +1618,8 @@ async def button_handler(
         except Exception as error:
 
             print(
-                f"Could not update group message: {error}"
+                f"Could not update group message: "
+                f"{error}"
             )
 
         return
@@ -1496,8 +1656,10 @@ async def button_handler(
             "Unknown option."
         ),
         reply_markup=main_menu(),
-                )
-    # =========================================================
+    )
+
+
+# =========================================================
 # TEXT MESSAGE HANDLER
 # =========================================================
 
@@ -1522,7 +1684,9 @@ async def channel_message(
         "waiting_for_kol_search"
     ):
 
-        channel = normalize_channel(message_text)
+        channel = normalize_channel(
+            message_text
+        )
 
         context.user_data[
             "waiting_for_kol_search"
@@ -1545,7 +1709,9 @@ async def channel_message(
 
         return
 
-    channel = normalize_channel(message_text)
+    channel = normalize_channel(
+        message_text
+    )
 
     # Stop waiting immediately.
     context.user_data[
@@ -1553,12 +1719,14 @@ async def channel_message(
     ] = False
 
     # =====================================================
-    # CHECK CHANNEL STATUS BEFORE SENDING ADMIN REQUEST
+    # CHECK CHANNEL STATUS
     # =====================================================
 
     try:
 
-        status = get_request_status(channel)
+        status = get_request_status(
+            channel
+        )
 
     except Exception as error:
 
@@ -1629,7 +1797,7 @@ async def channel_message(
     user_id = user.id
 
     # =====================================================
-    # SAVE AS PENDING BEFORE NOTIFYING ADMIN
+    # SAVE AS PENDING
     # =====================================================
 
     try:
@@ -1725,7 +1893,7 @@ async def channel_message(
         )
 
     # =====================================================
-    # IF GROUP FAILED, KEEP REQUEST PENDING BUT TELL USER
+    # USER CONFIRMATION
     # =====================================================
 
     if group_sent:
@@ -1774,7 +1942,7 @@ def main():
 
     init_database()
 
-    # Create the pending/approved/rejected request table.
+    # Create pending/approved/rejected request table.
     ensure_tracking_requests_table()
 
     print(
@@ -1786,7 +1954,7 @@ def main():
     )
 
     print(
-        f"📡 Raven Source: {RAVEN_CHANNEL}"
+        "📡 Monitoring: ALL verified/approved channels"
     )
 
     print(
