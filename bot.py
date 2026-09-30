@@ -2508,10 +2508,10 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
             f" Call ID: {call_id}"
         )
 
-        if video_file_id:
+        if original_video_file_id:
 
             print(
-                "🎥 Video file_id saved with call."
+                "🎥 Original video file_id saved with call."
             )
 
     except Exception as error:
@@ -3881,4 +3881,4 @@ def main():
 
 if __name__ == "__main__":
 
-    main() 
+    main()
