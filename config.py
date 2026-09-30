@@ -1,5 +1,5 @@
 import os
 
-BOT_TOKEN = os.getenv("8636602487:AAGjaXN2sy1gdUU1dKOaUSTWRI32EQvUzXU", "")
+BOT_TOKEN = os.getenv("BOT_TOKEN", "")
 SUPPORT_USERNAME = "ZENITP2P"
 LIVE_CHANNEL = "KOLPulse_Live"
