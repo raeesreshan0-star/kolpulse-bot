@@ -42,7 +42,7 @@ BOT_LINK = "https://t.me/KOLPulse_Live_bot"
 
 
 # =========================================================
-# CHANNEL REQUEST STATUS
+# CHANNEL NORMALIZER
 # =========================================================
 
 def normalize_channel(channel):
@@ -67,10 +67,15 @@ def normalize_channel(channel):
         )[0]
 
     if not channel.startswith("@"):
+
         channel = "@" + channel
 
     return channel
 
+
+# =========================================================
+# TRACKING REQUEST TABLE
+# =========================================================
 
 def ensure_tracking_requests_table():
 
@@ -92,9 +97,14 @@ def ensure_tracking_requests_table():
     conn.close()
 
 
+# =========================================================
+# REQUEST STATUS
+# =========================================================
+
 def get_request_status(channel):
 
     channel = normalize_channel(channel)
+
     clean = channel.lstrip("@").lower()
 
     try:
@@ -104,6 +114,7 @@ def get_request_status(channel):
         )
 
         if verified:
+
             return "approved"
 
     except Exception as error:
@@ -122,17 +133,24 @@ def get_request_status(channel):
         WHERE LOWER(REPLACE(channel_username, '@', '')) = ?
         ORDER BY id DESC
         LIMIT 1
-    """, (clean,))
+    """, (
+        clean,
+    ))
 
     row = cursor.fetchone()
 
     conn.close()
 
     if not row:
+
         return None
 
     return row[0]
 
+
+# =========================================================
+# SAVE PENDING REQUEST
+# =========================================================
 
 def save_pending_request(
     channel,
@@ -207,6 +225,10 @@ def save_pending_request(
     return True
 
 
+# =========================================================
+# UPDATE REQUEST STATUS
+# =========================================================
+
 def update_request_status(
     channel,
     status
@@ -238,6 +260,7 @@ def update_request_status(
 
 # =========================================================
 # MAIN MENU
+#
 # ONLY 5 MAIN BUTTONS
 # =========================================================
 
@@ -287,8 +310,7 @@ def main_menu():
 
 
 # =========================================================
-# ACCEPT / REJECT BUTTONS
-# ADMIN WORKFLOW
+# ADMIN ACCEPT / REJECT BUTTONS
 # =========================================================
 
 def request_buttons(
@@ -376,19 +398,27 @@ async def groupid(
 def format_market_cap(value):
 
     if value is None:
+
+        return "N/A"
+
+    if value <= 0:
+
         return "N/A"
 
     if value >= 1_000_000_000:
+
         return (
             f"${value / 1_000_000_000:.1f}B"
         )
 
     if value >= 1_000_000:
+
         return (
             f"${value / 1_000_000:.1f}M"
         )
 
     if value >= 1_000:
+
         return (
             f"${value / 1_000:.1f}K"
         )
@@ -397,20 +427,58 @@ def format_market_cap(value):
 
 
 # =========================================================
+# NUMBER + SUFFIX CONVERTER
+# =========================================================
+
+def convert_number(
+    number,
+    suffix=None
+):
+
+    try:
+
+        value = float(number)
+
+    except Exception:
+
+        return None
+
+    suffix = (
+        suffix or ""
+    ).upper()
+
+    if suffix == "K":
+
+        value *= 1_000
+
+    elif suffix == "M":
+
+        value *= 1_000_000
+
+    elif suffix == "B":
+
+        value *= 1_000_000_000
+
+    return value
+
+
+# =========================================================
 # TOKEN SYMBOL DETECTION
 # =========================================================
 
 def detect_token_symbol(
     text,
-    project_name,
-    contract
+    project_name=None
 ):
 
     source = text or ""
 
+    # -----------------------------------------------------
     # $TOKEN
+    # -----------------------------------------------------
+
     match = re.search(
-        r"\$([A-Za-z][A-Za-z0-9_]*)",
+        r"(?<![A-Za-z0-9_])\$([A-Za-z][A-Za-z0-9_]{0,30})",
         source
     )
 
@@ -419,19 +487,19 @@ def detect_token_symbol(
         return "$" + match.group(1)
 
 
-    # Symbol: TOKEN
-    symbol_patterns = [
+    # -----------------------------------------------------
+    # Token Symbol / Symbol / Ticker
+    # -----------------------------------------------------
 
-        r"(?:token\s*symbol|symbol)"
-        r"\s*[:=\-]\s*"
-        r"\$?([A-Za-z][A-Za-z0-9_]*)",
+    patterns = [
 
-        r"(?:ticker)"
-        r"\s*[:=\-]\s*"
-        r"\$?([A-Za-z][A-Za-z0-9_]*)",
+        r"(?:token\s*symbol|symbol|ticker)"
+        r"\s*[:=\-]\s*\$?"
+        r"([A-Za-z][A-Za-z0-9_]{0,30})",
+
     ]
 
-    for pattern in symbol_patterns:
+    for pattern in patterns:
 
         match = re.search(
             pattern,
@@ -444,76 +512,65 @@ def detect_token_symbol(
             return "$" + match.group(1)
 
 
-    # Try project name
-    match = re.search(
-        r"\$([A-Za-z][A-Za-z0-9_]*)",
-        project_name or ""
-    )
+    # -----------------------------------------------------
+    # PROJECT NAME
+    # -----------------------------------------------------
 
-    if match:
+    if project_name:
 
-        return "$" + match.group(1)
+        match = re.search(
+            r"(?<![A-Za-z0-9_])\$([A-Za-z][A-Za-z0-9_]{0,30})",
+            project_name
+        )
+
+        if match:
+
+            return "$" + match.group(1)
 
 
-    # Do not use contract address as token symbol.
     return "$TOKEN"
 
 
 # =========================================================
 # CONTRACT / CA DETECTION
+#
+# Supports:
+#
+# CA: 0x...
+# Contract: 0x...
+# Contract Address: 0x...
+# 0x...
+# DexScreener URL:
+# https://dexscreener.com/ethereum/0x...
+#
+# IMPORTANT:
+# EVM-style CA length is made flexible.
 # =========================================================
 
 def parse_contract(text):
 
-    """
-    Detects many common CA formats:
-
-    Contract: 0x...
-    Contract Address: 0x...
-    CA: 0x...
-    CA : 0x...
-    CA - 0x...
-    CA = 0x...
-
-    Solana addresses
-    EVM addresses
-    General long CA strings
-    """
-
     if not text:
+
         return None
 
 
     # =====================================================
-    # EVM ADDRESS
-    # =====================================================
-
-    evm = re.search(
-        r"\b0x[a-fA-F0-9]{40}\b",
-        text
-    )
-
-    # Keep searching for explicit CA first,
-    # but EVM fallback is always available.
-
-
-    # =====================================================
-    # EXPLICIT LABELS
+    # 1. EXPLICIT CA / CONTRACT
     # =====================================================
 
     explicit_patterns = [
 
         r"(?:contract\s+address)"
         r"\s*[:=\-]?\s*"
-        r"`?([A-Za-z0-9]{20,120})`?",
+        r"`?([A-Za-z0-9]{20,160})`?",
 
         r"(?:contract)"
         r"\s*[:=\-]?\s*"
-        r"`?([A-Za-z0-9]{20,120})`?",
+        r"`?([A-Za-z0-9]{20,160})`?",
 
         r"(?:ca)"
         r"\s*[:=\-]?\s*"
-        r"`?([A-Za-z0-9]{20,120})`?",
+        r"`?([A-Za-z0-9]{20,160})`?",
     ]
 
 
@@ -529,7 +586,6 @@ def parse_contract(text):
 
             value = match.group(1).strip()
 
-            # Remove accidental punctuation
             value = value.strip(
                 "`'\"<>[](){}.,; "
             )
@@ -540,36 +596,84 @@ def parse_contract(text):
 
 
     # =====================================================
-    # EVM FALLBACK
+    # 2. DEXSCREENER URL
+    #
+    # Example:
+    # https://dexscreener.com/ethereum/0xABC...
     # =====================================================
 
-    if evm:
+    dex_patterns = [
 
-        return evm.group(0)
+        r"https?://(?:www\.)?"
+        r"dexscreener\.com/"
+        r"[^/\s]+/"
+        r"(0x[a-fA-F0-9]{20,160})",
+
+        r"https?://(?:www\.)?"
+        r"dexscreener\.com/"
+        r"[^/\s]+/"
+        r"([A-Za-z0-9]{20,160})",
+    ]
+
+
+    for pattern in dex_patterns:
+
+        matches = re.findall(
+            pattern,
+            text,
+            re.IGNORECASE
+        )
+
+        for value in matches:
+
+            value = value.strip(
+                "`'\"<>[](){}.,; "
+            )
+
+            if len(value) >= 20:
+
+                return value
 
 
     # =====================================================
-    # SOLANA / GENERAL ADDRESS FALLBACK
+    # 3. ANY 0x ADDRESS
+    #
+    # Flexible length instead of only 40 chars.
     # =====================================================
 
-    # Long Base58-style strings.
-    # Avoid matching normal English words.
+    evm_matches = re.findall(
+        r"\b0x[a-fA-F0-9]{20,160}\b",
+        text
+    )
+
+    if evm_matches:
+
+        return evm_matches[0]
+
+
+    # =====================================================
+    # 4. SOLANA / BASE58 STYLE ADDRESS
+    # =====================================================
 
     candidates = re.findall(
-        r"\b[A-HJ-NP-Za-km-z1-9]{32,64}\b",
+        r"\b[A-HJ-NP-Za-km-z1-9]{32,100}\b",
         text
     )
 
     for candidate in candidates:
 
-        # Skip obvious URLs / normal words
-        if candidate.lower() in [
-            "abcdefghijklmnopqrstuvwxyz",
-            "abcdefghijklmnopqrstuvwxyz123456",
-        ]:
+        if candidate.startswith(
+            (
+                "https",
+                "www",
+                "dexscreener",
+                "telegram",
+                "twitter",
+            )
+        ):
+
             continue
 
-        # Require a reasonable mixture
         has_letter = bool(
             re.search(
                 r"[A-Za-z]",
@@ -593,68 +697,132 @@ def parse_contract(text):
 
 
 # =========================================================
+# DEXSCREENER CHAIN DETECTION
+# =========================================================
+
+def detect_dex_chain(text):
+
+    if not text:
+
+        return None
+
+
+    match = re.search(
+
+        r"https?://(?:www\.)?"
+        r"dexscreener\.com/"
+        r"([^/\s]+)",
+
+        text,
+
+        re.IGNORECASE
+    )
+
+
+    if not match:
+
+        return None
+
+
+    chain = match.group(1).strip().lower()
+
+
+    chain_map = {
+
+        "ethereum": "ETH",
+
+        "solana": "SOL",
+
+        "base": "BASE",
+
+        "bsc": "BSC",
+
+        "arbitrum": "ARB",
+
+        "polygon": "POLY",
+
+        "avalanche": "AVAX",
+
+        "optimism": "OP",
+
+        "zksync": "ZKSYNC",
+
+        "linea": "LINEA",
+
+        "scroll": "SCROLL",
+
+        "blast": "BLAST",
+
+        "sonic": "SONIC",
+
+        "monad": "MONAD",
+
+        "hyperevm": "HYPER",
+
+        "robinhood": "ROBINHOOD",
+    }
+
+
+    if chain in chain_map:
+
+        return chain_map[chain]
+
+
+    return chain.upper()
+
+
+# =========================================================
 # MARKET CAP / MC DETECTION
 # =========================================================
 
 def parse_market_cap(text):
 
-    """
-    Supports:
-
-    Market Cap: $50K
-    Market Cap $50K
-    MC: $50K
-    MC $50K
-    Current MC: $52.5K
-    Current Market Cap: $52.5K
-    $30.8K MC
-    $30.8K mc
-    Current chart is $30.8K mc
-    FDV: $1M
-    """
-
     if not text:
+
         return None
 
 
-    # =====================================================
-    # EXPLICIT MC PATTERNS
-    # =====================================================
+    patterns = [
 
-    explicit_patterns = [
-
+        # Market Cap: $50K
         r"(?:market\s*cap|marketcap)"
         r"\s*(?:is|:|=|-)?\s*"
         r"\$?\s*"
         r"([0-9]+(?:\.[0-9]+)?)"
         r"\s*([KMB])?\b",
 
-        r"(?:current\s+market\s*cap)"
-        r"\s*(?:is|:|=|-)?\s*"
-        r"\$?\s*"
-        r"([0-9]+(?:\.[0-9]+)?)"
-        r"\s*([KMB])?\b",
-
+        # Current MC: $50K
         r"(?:current\s*mc)"
         r"\s*(?:is|:|=|-)?\s*"
         r"\$?\s*"
         r"([0-9]+(?:\.[0-9]+)?)"
         r"\s*([KMB])?\b",
 
-        r"(?:\bmc\b)"
+        # MC: $50K
+        r"\bmc\b"
         r"\s*(?:is|:|=|-)?\s*"
         r"\$?\s*"
         r"([0-9]+(?:\.[0-9]+)?)"
         r"\s*([KMB])?\b",
 
+        # $50K MC
         r"\$?\s*"
         r"([0-9]+(?:\.[0-9]+)?)"
-        r"\s*([KMB])?\s*"
-        r"(?:mc|market\s*cap)\b",
+        r"\s*([KMB])?"
+        r"\s*(?:mc|market\s*cap)\b",
+
+        # Current chart is $50K mc
+        r"(?:current\s+chart|chart|"
+        r"current\s+market\s+cap)"
+        r".{0,100}?"
+        r"\$?\s*"
+        r"([0-9]+(?:\.[0-9]+)?)"
+        r"\s*([KMB])?"
+        r"\s*mc\b",
     ]
 
 
-    for pattern in explicit_patterns:
+    for pattern in patterns:
 
         match = re.search(
             pattern,
@@ -664,136 +832,28 @@ def parse_market_cap(text):
 
         if match:
 
-            try:
+            return convert_number(
+                match.group(1),
+                match.group(2)
+            )
 
-                number = float(
-                    match.group(1)
-                )
-
-            except ValueError:
-
-                continue
-
-            suffix = (
-                match.group(2) or ""
-            ).upper()
-
-            if suffix == "K":
-
-                number *= 1_000
-
-            elif suffix == "M":
-
-                number *= 1_000_000
-
-            elif suffix == "B":
-
-                number *= 1_000_000_000
-
-            return number
-
-
-    # =====================================================
-    # CURRENT CHART
-    # =====================================================
-
-    chart_pattern = re.search(
-
-        r"(?:current\s+chart|chart|"
-        r"current\s+market\s+cap)"
-        r".{0,80}?"
-        r"\$?\s*"
-        r"([0-9]+(?:\.[0-9]+)?)"
-        r"\s*([KMB])?\s*"
-        r"mc\b",
-
-        text,
-        re.IGNORECASE
-    )
-
-
-    if chart_pattern:
-
-        number = float(
-            chart_pattern.group(1)
-        )
-
-        suffix = (
-            chart_pattern.group(2) or ""
-        ).upper()
-
-        if suffix == "K":
-
-            number *= 1_000
-
-        elif suffix == "M":
-
-            number *= 1_000_000
-
-        elif suffix == "B":
-
-            number *= 1_000_000_000
-
-        return number
-
-
-    # =====================================================
-    # FDV / VALUATION FALLBACK
-    # =====================================================
-
-    fdv_pattern = re.search(
-
-        r"(?:fdv|valuation)"
-        r"\s*(?:is|:|=|-)?\s*"
-        r"\$?\s*"
-        r"([0-9]+(?:\.[0-9]+)?)"
-        r"\s*([KMB])?\b",
-
-        text,
-        re.IGNORECASE
-    )
-
-
-    if fdv_pattern:
-
-        number = float(
-            fdv_pattern.group(1)
-        )
-
-        suffix = (
-            fdv_pattern.group(2) or ""
-        ).upper()
-
-        if suffix == "K":
-
-            number *= 1_000
-
-        elif suffix == "M":
-
-            number *= 1_000_000
-
-        elif suffix == "B":
-
-            number *= 1_000_000_000
-
-        return number
-
-
-    # =====================================================
-    # NO MC FOUND
-    # =====================================================
 
     return None
 
 
 # =========================================================
-# PROJECT LINK DETECTION
+# PROJECT / SOCIAL LINKS
 # =========================================================
 
-def parse_project_link(text):
+def parse_project_links(text):
 
     if not text:
-        return None
+
+        return {
+            "project_link": None,
+            "dex_link": None,
+            "x_link": None,
+        }
 
 
     urls = re.findall(
@@ -803,40 +863,79 @@ def parse_project_link(text):
     )
 
 
+    cleaned_urls = []
+
     for url in urls:
 
         url = url.rstrip(
             ".,;:!?)]}>\"'"
         )
 
-        lower = url.lower()
-
-
-        # Prefer project/social/chart links
-        if (
-            "x.com/" in lower
-            or "twitter.com/" in lower
-            or "dexscreener.com/" in lower
-            or "pump.fun/" in lower
-            or "birdeye.so/" in lower
-            or "raydium.io/" in lower
-            or "dextools.io/" in lower
-        ):
-
-            return url
-
-
-    # If no preferred link,
-    # return first valid URL.
-
-    if urls:
-
-        return urls[0].rstrip(
-            ".,;:!?)]}>\"'"
+        cleaned_urls.append(
+            url
         )
 
 
-    return None
+    dex_link = None
+    x_link = None
+    project_link = None
+
+
+    # -----------------------------------------------------
+    # DEXSCREENER
+    # -----------------------------------------------------
+
+    for url in cleaned_urls:
+
+        if "dexscreener.com/" in url.lower():
+
+            dex_link = url
+
+            break
+
+
+    # -----------------------------------------------------
+    # X / TWITTER
+    # -----------------------------------------------------
+
+    for url in cleaned_urls:
+
+        lower = url.lower()
+
+        if (
+            "x.com/" in lower
+            or "twitter.com/" in lower
+        ):
+
+            x_link = url
+
+            break
+
+
+    # -----------------------------------------------------
+    # PREFERRED PROJECT LINK
+    #
+    # X first, then DEX, then first URL.
+    # -----------------------------------------------------
+
+    if x_link:
+
+        project_link = x_link
+
+    elif dex_link:
+
+        project_link = dex_link
+
+    elif cleaned_urls:
+
+        project_link = cleaned_urls[0]
+
+
+    return {
+        "project_link": project_link,
+        "dex_link": dex_link,
+        "x_link": x_link,
+    }
 
 
 # =========================================================
@@ -850,11 +949,11 @@ def parse_project_name(
 
     if not text:
 
-        return (
-            contract[:12]
-            if contract
-            else "Unknown Project"
-        )
+        if contract:
+
+            return contract[:12]
+
+        return "Unknown Project"
 
 
     # =====================================================
@@ -884,7 +983,32 @@ def parse_project_name(
 
 
     # =====================================================
-    # TOKEN / $ SYMBOL LINE
+    # $TOKEN FIRST LINE
+    #
+    # Example:
+    # $IP 🔹
+    # $VRAX 🔥
+    # =====================================================
+
+    for line in text.splitlines():
+
+        clean = line.strip()
+
+        match = re.search(
+            r"(?<![A-Za-z0-9_])"
+            r"\$([A-Za-z][A-Za-z0-9_]{0,30})",
+            clean
+        )
+
+        if match:
+
+            return (
+                "$" + match.group(1)
+            )
+
+
+    # =====================================================
+    # NAME WITH $TOKEN
     # =====================================================
 
     for line in text.splitlines():
@@ -892,6 +1016,7 @@ def parse_project_name(
         clean = line.strip()
 
         if not clean:
+
             continue
 
         if re.search(
@@ -899,22 +1024,13 @@ def parse_project_name(
             clean
         ):
 
-            if not re.search(
-                r"(?:CA|Contract|Market Cap|"
-                r"Current MC|MC|Dexscreener|"
-                r"Telegram|Twitter|X:|"
-                r"FDV)\b",
-                clean,
-                re.IGNORECASE
-            ):
+            if len(clean) <= 120:
 
-                if len(clean) <= 120:
-
-                    return clean
+                return clean
 
 
     # =====================================================
-    # X/TWITTER HANDLE AS PROJECT NAME
+    # X HANDLE
     # =====================================================
 
     x_match = re.search(
@@ -926,50 +1042,9 @@ def parse_project_name(
 
     if x_match:
 
-        handle = x_match.group(1)
-
-        if handle:
-
-            return handle
-
-
-    # =====================================================
-    # FIRST SHORT NON-URL LINE
-    # =====================================================
-
-    for line in text.splitlines():
-
-        clean = line.strip()
-
-        if not clean:
-            continue
-
-        if clean.startswith(
-            ("http://", "https://")
-        ):
-            continue
-
-        if re.fullmatch(
-            r"0x[a-fA-F0-9]{40}",
-            clean
-        ):
-            continue
-
-        if re.match(
-            r"^(CA|Contract|Contract Address|"
-            r"MC|Market Cap|FDV)\b",
-            clean,
-            re.IGNORECASE
-        ):
-            continue
-
-        if 2 <= len(clean) <= 100:
-
-            # Avoid long Chinese/English descriptions
-            # being used as project name.
-            if len(clean.split()) <= 12:
-
-                return clean
+        return (
+            x_match.group(1)
+        )
 
 
     # =====================================================
@@ -993,6 +1068,16 @@ def detect_chain_symbol(
     contract=None
 ):
 
+    # First try DexScreener URL.
+    dex_chain = detect_dex_chain(
+        text
+    )
+
+    if dex_chain:
+
+        return dex_chain
+
+
     source = (
         text or ""
     ).lower()
@@ -1000,9 +1085,7 @@ def detect_chain_symbol(
 
     if (
         "solana" in source
-        or "sol " in source
         or "sol:" in source
-        or "dexscreener.com/solana/" in source
     ):
 
         return "SOL"
@@ -1010,18 +1093,16 @@ def detect_chain_symbol(
 
     if (
         "ethereum" in source
-        or "eth " in source
         or "eth:" in source
-        or "dexscreener.com/ethereum/" in source
+        or " eth " in source
     ):
 
         return "ETH"
 
 
     if (
-        "base" in source
-        or "base chain" in source
-        or "dexscreener.com/base/" in source
+        "base chain" in source
+        or "base:" in source
     ):
 
         return "BASE"
@@ -1031,7 +1112,6 @@ def detect_chain_symbol(
         "bsc" in source
         or "bnb" in source
         or "binance smart chain" in source
-        or "dexscreener.com/bsc/" in source
     ):
 
         return "BSC"
@@ -1039,9 +1119,7 @@ def detect_chain_symbol(
 
     if (
         "arbitrum" in source
-        or "arb " in source
         or "arb:" in source
-        or "dexscreener.com/arbitrum/" in source
     ):
 
         return "ARB"
@@ -1050,7 +1128,6 @@ def detect_chain_symbol(
     if (
         "polygon" in source
         or "matic" in source
-        or "dexscreener.com/polygon/" in source
     ):
 
         return "POLY"
@@ -1059,15 +1136,13 @@ def detect_chain_symbol(
     if (
         "avalanche" in source
         or "avax" in source
-        or "dexscreener.com/avalanche/" in source
     ):
 
         return "AVAX"
 
 
-    # EVM address alone does not tell us which EVM chain.
     if contract and re.fullmatch(
-        r"0x[a-fA-F0-9]{40}",
+        r"0x[a-fA-F0-9]{20,160}",
         contract
     ):
 
@@ -1097,13 +1172,15 @@ def is_verified_channel(channel):
 
             return True
 
+
     except Exception as error:
 
         print(
-            "❌ Verification database error for "
-            f"{channel}: "
+            "❌ Verification database error "
+            f"for {channel}: "
             f"{type(error).__name__}: {error}"
         )
+
 
     return False
 
@@ -1115,6 +1192,7 @@ def is_verified_channel(channel):
 async def show_live_calls(query):
 
     calls = get_live_calls()
+
 
     if not calls:
 
@@ -1136,7 +1214,9 @@ async def show_live_calls(query):
         return
 
 
-    text = "🔥 LIVE CALLS\n\n"
+    text = (
+        "🔥 LIVE CALLS\n\n"
+    )
 
 
     for call in calls[:10]:
@@ -1158,43 +1238,27 @@ async def show_live_calls(query):
         ) = call
 
 
-        call_mc_text = (
+        text += (
 
-            f"${call_mc:,.0f}"
+            f"🟢 {project_name}\n"
 
-            if call_mc is not None
+            f"👤 {kol_username}\n"
 
-            else "N/A"
-        )
+            f"💰 Call MC: "
+            f"{format_market_cap(call_mc)}\n"
 
+            f"📈 Current MC: "
+            f"{format_market_cap(current_mc)}\n"
 
-        current_mc_text = (
-
-            f"${current_mc:,.0f}"
-
-            if current_mc is not None
-
-            else "N/A"
-        )
-
-
-        multiplier_text = (
-
-            f"{multiplier:.2f}x"
-
+            f"🚀 Multiplier: "
+            f"{multiplier:.2f}x\n"
             if multiplier is not None
-
-            else "N/A"
+            else
+            f"🚀 Multiplier: N/A\n"
         )
 
 
         text += (
-
-            f"🟢 {project_name}\n"
-            f"👤 {kol_username}\n"
-            f"💰 Call MC: {call_mc_text}\n"
-            f"📈 Current MC: {current_mc_text}\n"
-            f"🚀 Multiplier: {multiplier_text}\n"
             f"⏱️ {call_time or 'N/A'}\n\n"
         )
 
@@ -1244,13 +1308,14 @@ async def show_live_calls(query):
 
 
 # =========================================================
-# KOL LEADERBOARD
+# KOL LEADERBOARD DATABASE QUERY
 # =========================================================
 
 def get_kol_leaderboard():
 
     conn = get_connection()
     cursor = conn.cursor()
+
 
     cursor.execute("""
         SELECT
@@ -1268,7 +1333,9 @@ def get_kol_leaderboard():
         LEFT JOIN calls c
             ON LOWER(
                 REPLACE(c.kol_username, '@', '')
-            ) = LOWER(v.channel_username)
+            ) = LOWER(
+                v.channel_username
+            )
             AND c.created_at >= v.verified_at
         GROUP BY v.channel_username
         HAVING COUNT(c.id) > 0
@@ -1278,6 +1345,7 @@ def get_kol_leaderboard():
             best_multiplier DESC
         LIMIT 10
     """)
+
 
     results = cursor.fetchall()
 
@@ -1292,14 +1360,19 @@ def get_kol_leaderboard():
 
 async def show_kol_leaderboard(query):
 
-    leaderboard = get_kol_leaderboard()
+    leaderboard = (
+        get_kol_leaderboard()
+    )
+
 
     if not leaderboard:
 
         await query.edit_message_text(
 
             "📊 KOL Leaderboard\n\n"
+
             "No leaderboard data available yet.\n\n"
+
             "Verified KOLs will appear here "
             "after their calls are tracked.",
 
@@ -1333,9 +1406,18 @@ async def show_kol_leaderboard(query):
     ):
 
         channel_username = row[0]
-        total_calls = row[1] or 0
-        two_x_calls = row[2] or 0
-        best_multiplier = row[3] or 0
+
+        total_calls = (
+            row[1] or 0
+        )
+
+        two_x_calls = (
+            row[2] or 0
+        )
+
+        best_multiplier = (
+            row[3] or 0
+        )
 
 
         if index < 3:
@@ -1367,9 +1449,11 @@ async def show_kol_leaderboard(query):
             f'{safe_channel}'
             f'</a>\n'
 
-            f"📞 Calls: {total_calls}\n"
+            f"📞 Calls: "
+            f"{total_calls}\n"
 
-            f"🚀 2x+: {two_x_calls}\n"
+            f"🚀 2x+: "
+            f"{two_x_calls}\n"
 
             f"🔥 Best: "
             f"{best_multiplier:.2f}x\n\n"
@@ -1377,8 +1461,8 @@ async def show_kol_leaderboard(query):
 
 
     text += (
-        "📌 Rankings are based on tracked calls "
-        "after KOL verification."
+        "📌 Rankings are based on tracked "
+        "calls after KOL verification."
     )
 
 
@@ -1410,8 +1494,9 @@ async def search_kol(query):
     await query.edit_message_text(
 
         "🔎 Search KOL\n\n"
-        "Send the Telegram KOL channel username "
-        "or link.\n\n"
+
+        "Send the Telegram KOL channel "
+        "username or link.\n\n"
 
         "Example:\n"
         "@CRYPTO_RAVEN_CALL\n\n"
@@ -1449,7 +1534,10 @@ async def show_kol_results(
         await update.message.reply_text(
 
             "❌ KOL Not Verified\n\n"
-            f"{channel} isn't verified on KOLPulse yet.\n\n"
+
+            f"{channel} isn't verified "
+            "on KOLPulse yet.\n\n"
+
             "Please verify the channel first "
             "using 📡 Track My Channel.",
 
@@ -1478,9 +1566,7 @@ async def show_kol_results(
             "🟢 Status: Verified\n\n"
 
             "No tracked calls were found after "
-            "this channel was verified.\n\n"
-
-            "KOLPulse will show new tracked calls here.",
+            "this channel was verified.",
 
             reply_markup=main_menu(),
         )
@@ -1493,6 +1579,7 @@ async def show_kol_results(
         "🔎 KOL RESULTS\n\n"
 
         f"📡 KOL: {channel}\n"
+
         "🟢 Status: Verified\n\n"
     )
 
@@ -1516,51 +1603,26 @@ async def show_kol_results(
         ) = call
 
 
-        call_mc_text = (
-
-            f"${call_mc:,.0f}"
-
-            if call_mc is not None
-
-            else "N/A"
-        )
-
-
-        current_mc_text = (
-
-            f"${current_mc:,.0f}"
-
-            if current_mc is not None
-
-            else "N/A"
-        )
-
-
-        multiplier_text = (
-
-            f"{multiplier:.2f}x"
-
-            if multiplier is not None
-
-            else "N/A"
-        )
-
-
         text += (
 
             f"🟣 {project_name}\n"
 
             f"💰 Call MC: "
-            f"{call_mc_text}\n"
+            f"{format_market_cap(call_mc)}\n"
 
             f"📈 Current MC: "
-            f"{current_mc_text}\n"
+            f"{format_market_cap(current_mc)}\n"
 
             f"🚀 Multiplier: "
-            f"{multiplier_text}\n"
+            f"{multiplier:.2f}x\n"
+            if multiplier is not None
+            else
+            f"🚀 Multiplier: N/A\n"
+        )
 
-            f"⏱️ "
-            f"{call_time or 'N/A'}\n"
+
+        text += (
+            f"⏱️ {call_time or 'N/A'}\n"
         )
 
 
@@ -1595,18 +1657,19 @@ async def show_kol_results(
 
 # =========================================================
 # AUTOMATIC CHANNEL CALL DETECTOR
-# =========================================================
 #
 # ALL VERIFIED / APPROVED CHANNELS
 #
-# No Raven-only restriction.
+# Supported:
 #
-# Requirements:
-# - Bot must be Admin in tracked channel
-# - Channel must be verified in database
-# - Post must contain a detectable CA/Contract
-#
-# MC is OPTIONAL.
+# $TOKEN
+# CA:
+# Contract:
+# Direct 0x...
+# DexScreener URL
+# Missing MC
+# X/Twitter link
+# Multiple chains
 #
 # =========================================================
 
@@ -1615,11 +1678,8 @@ async def channel_post_handler(
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    # -----------------------------------------------------
-    # CHANNEL POST
-    # -----------------------------------------------------
-
     message = update.channel_post
+
 
     if not message:
 
@@ -1628,10 +1688,6 @@ async def channel_post_handler(
 
     chat = message.chat
 
-
-    # -----------------------------------------------------
-    # PUBLIC CHANNEL REQUIRED
-    # -----------------------------------------------------
 
     if not chat.username:
 
@@ -1658,9 +1714,9 @@ async def channel_post_handler(
     )
 
 
-    # -----------------------------------------------------
-    # TEXT + CAPTION
-    # -----------------------------------------------------
+    # =====================================================
+    # TEXT OR CAPTION
+    # =====================================================
 
     text = (
 
@@ -1675,16 +1731,25 @@ async def channel_post_handler(
     if not text:
 
         print(
-            f"⏭️ Empty post ignored from "
-            f"{channel}"
+            f"⏭️ Empty post ignored "
+            f"from {channel}"
         )
 
         return
 
 
-    # -----------------------------------------------------
+    print(
+        "📝 Post text received:"
+    )
+
+    print(
+        text[:1500]
+    )
+
+
+    # =====================================================
     # VERIFIED CHANNEL ONLY
-    # -----------------------------------------------------
+    # =====================================================
 
     if not is_verified_channel(
         channel
@@ -1704,9 +1769,9 @@ async def channel_post_handler(
     )
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # CONTRACT / CA
-    # -----------------------------------------------------
+    # =====================================================
 
     contract = parse_contract(
         text
@@ -1729,10 +1794,11 @@ async def channel_post_handler(
     )
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # MARKET CAP
-    # MC IS OPTIONAL
-    # -----------------------------------------------------
+    #
+    # OPTIONAL
+    # =====================================================
 
     call_mc = parse_market_cap(
         text
@@ -1742,13 +1808,11 @@ async def channel_post_handler(
     if call_mc is None:
 
         print(
-            f"ℹ️ MC not found in "
-            f"{channel} post."
+            "ℹ️ Market Cap not found."
         )
 
         print(
-            "➡️ Call will still be tracked "
-            "with MC = N/A."
+            "➡️ Continuing with MC = N/A."
         )
 
     else:
@@ -1759,9 +1823,9 @@ async def channel_post_handler(
         )
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # PROJECT NAME
-    # -----------------------------------------------------
+    # =====================================================
 
     project_name = parse_project_name(
         text,
@@ -1775,14 +1839,13 @@ async def channel_post_handler(
     )
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # TOKEN SYMBOL
-    # -----------------------------------------------------
+    # =====================================================
 
     token_symbol = detect_token_symbol(
         text,
-        project_name,
-        contract
+        project_name
     )
 
 
@@ -1792,9 +1855,9 @@ async def channel_post_handler(
     )
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # CHAIN
-    # -----------------------------------------------------
+    # =====================================================
 
     chain_symbol = detect_chain_symbol(
         text,
@@ -1808,28 +1871,58 @@ async def channel_post_handler(
     )
 
 
-    # -----------------------------------------------------
-    # PROJECT LINK
-    # -----------------------------------------------------
+    # =====================================================
+    # LINKS
+    # =====================================================
 
-    project_link = parse_project_link(
+    links = parse_project_links(
         text
     )
+
+
+    project_link = links[
+        "project_link"
+    ]
+
+    dex_link = links[
+        "dex_link"
+    ]
+
+    x_link = links[
+        "x_link"
+    ]
+
+
+    if dex_link:
+
+        print(
+            f"📈 DexScreener: "
+            f"{dex_link}"
+        )
+
+
+    if x_link:
+
+        print(
+            f"𝕏 X/Twitter: "
+            f"{x_link}"
+        )
 
 
     if project_link:
 
         print(
-            f"🔗 Project link detected: "
+            f"🔗 Project link: "
             f"{project_link}"
         )
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # TELEGRAM LINKS
-    # -----------------------------------------------------
+    # =====================================================
 
     original_call_link = (
+
         f"https://t.me/"
         f"{chat.username}/"
         f"{message.message_id}"
@@ -1837,14 +1930,34 @@ async def channel_post_handler(
 
 
     kol_link = (
+
         f"https://t.me/"
         f"{chat.username}"
     )
 
 
-    # -----------------------------------------------------
+    # =====================================================
+    # DATABASE MC VALUE
+    #
+    # If database column is NOT NULL,
+    # store 0 internally.
+    #
+    # UI will still show N/A.
+    # =====================================================
+
+    database_mc = (
+
+        call_mc
+
+        if call_mc is not None
+
+        else 0
+    )
+
+
+    # =====================================================
     # SAVE CALL
-    # -----------------------------------------------------
+    # =====================================================
 
     try:
 
@@ -1862,9 +1975,9 @@ async def channel_post_handler(
                 original_call_link
             ),
 
-            call_mc=call_mc,
+            call_mc=database_mc,
 
-            current_mc=call_mc,
+            current_mc=database_mc,
 
             multiplier=1,
 
@@ -1885,29 +1998,45 @@ async def channel_post_handler(
             "✅ CALL DETECTED AND SAVED"
         )
 
+
         print(
             f"   KOL: {channel}"
         )
 
-        print(
-            f"   Project: {project_name}"
-        )
 
         print(
-            f"   Token: {token_symbol}"
+            f"   Project: "
+            f"{project_name}"
         )
 
-        print(
-            f"   Contract: {contract}"
-        )
 
         print(
-            "   Call MC: "
+            f"   Token: "
+            f"{token_symbol}"
+        )
+
+
+        print(
+            f"   Contract: "
+            f"{contract}"
+        )
+
+
+        print(
+            f"   Chain: "
+            f"{chain_symbol}"
+        )
+
+
+        print(
+            f"   Call MC: "
             f"{format_market_cap(call_mc)}"
         )
 
+
         print(
-            f"   Call ID: {call_id}"
+            f"   Call ID: "
+            f"{call_id}"
         )
 
 
@@ -1921,9 +2050,9 @@ async def channel_post_handler(
         return
 
 
-    # -----------------------------------------------------
+    # =====================================================
     # SEND ALERT TO KOLPULSE LIVE
-    # -----------------------------------------------------
+    # =====================================================
 
     try:
 
@@ -1931,17 +2060,21 @@ async def channel_post_handler(
             channel
         )
 
+
         safe_token = html.escape(
             token_symbol
         )
+
 
         safe_contract = html.escape(
             contract
         )
 
+
         safe_chain = html.escape(
             chain_symbol
         )
+
 
         mc_display = format_market_cap(
             call_mc
@@ -2030,7 +2163,7 @@ async def button_handler(
 
 
     # =====================================================
-    # KOL LEADERBOARD
+    # LEADERBOARD
     # =====================================================
 
     if data == "leaderboard":
@@ -2050,11 +2183,11 @@ async def button_handler(
                 f"{type(error).__name__}: {error}"
             )
 
+
             await query.edit_message_text(
 
                 "⚠️ KOL Leaderboard "
-                "could not be loaded.\n\n"
-                "Please try again.",
+                "could not be loaded.",
 
                 reply_markup=InlineKeyboardMarkup([
                     [
@@ -2082,9 +2215,11 @@ async def button_handler(
             "waiting_for_channel"
         ] = False
 
+
         context.user_data[
             "waiting_for_kol_search"
         ] = False
+
 
         context.user_data[
             "channel_admin_check"
@@ -2143,9 +2278,11 @@ async def button_handler(
             "waiting_for_channel"
         ] = True
 
+
         context.user_data[
             "waiting_for_kol_search"
         ] = False
+
 
         context.user_data[
             "channel_admin_check"
@@ -2197,6 +2334,7 @@ async def button_handler(
             "waiting_for_channel"
         ] = False
 
+
         context.user_data[
             "waiting_for_kol_search"
         ] = True
@@ -2222,9 +2360,11 @@ async def button_handler(
             "waiting_for_channel"
         ] = False
 
+
         context.user_data[
             "waiting_for_kol_search"
         ] = False
+
 
         context.user_data[
             "channel_admin_check"
@@ -2325,6 +2465,7 @@ async def button_handler(
                 f"Admin check error: {error}"
             )
 
+
             await query.answer(
                 "Could not verify admin.",
                 show_alert=True
@@ -2334,7 +2475,7 @@ async def button_handler(
 
 
         # -------------------------------------------------
-        # PREVENT DUPLICATE APPROVAL
+        # ALREADY VERIFIED
         # -------------------------------------------------
 
         try:
@@ -2369,8 +2510,8 @@ async def button_handler(
         except Exception as error:
 
             print(
-                "Existing verification "
-                f"check error: {error}"
+                "Existing verification check error: "
+                f"{error}"
             )
 
 
@@ -2407,6 +2548,7 @@ async def button_handler(
                 f"{type(error).__name__}: {error}"
             )
 
+
             await query.answer(
                 "Could not save verification.",
                 show_alert=True
@@ -2434,7 +2576,7 @@ async def button_handler(
                     "Your channel has been verified "
                     "on KOLPulse.\n\n"
 
-                    "🔎 New KOL calls will now be "
+                    "🔎 New calls will now be "
                     "automatically tracked."
                 ),
             )
@@ -2575,6 +2717,7 @@ async def button_handler(
                 f"Admin check error: {error}"
             )
 
+
             await query.answer(
                 "Could not verify admin.",
                 show_alert=True
@@ -2584,7 +2727,7 @@ async def button_handler(
 
 
         # -------------------------------------------------
-        # UPDATE REJECTED STATUS
+        # UPDATE STATUS
         # -------------------------------------------------
 
         try:
@@ -2625,6 +2768,7 @@ async def button_handler(
                     "if needed."
                 ),
             )
+
 
         except Exception as error:
 
@@ -2667,6 +2811,7 @@ async def button_handler(
 
         await query.answer()
 
+
         await query.edit_message_text(
 
             "🏆 Top KOLs\n\n"
@@ -2700,6 +2845,7 @@ async def button_handler(
 
         await query.answer()
 
+
         await query.edit_message_text(
 
             "🆘 KOLPulse Support\n\n"
@@ -2731,6 +2877,7 @@ async def button_handler(
 
     await query.answer()
 
+
     await query.edit_message_text(
 
         "⚠️ Unknown option.",
@@ -2740,7 +2887,7 @@ async def button_handler(
 
 
 # =========================================================
-# VERIFY BOT ADMIN IN CHANNEL
+# VERIFY BOT ADMIN
 # =========================================================
 
 async def verify_bot_is_channel_admin(
@@ -2914,6 +3061,7 @@ async def channel_message(
             f"📡 Channel: {channel}\n\n"
 
             "Please add:\n"
+
             f"🤖 {BOT_USERNAME}\n\n"
 
             "as an Admin in your Telegram channel.\n\n"
@@ -2932,6 +3080,7 @@ async def channel_message(
                         )
                     )
                 ],
+
                 [
                     InlineKeyboardButton(
                         "⬅️ Back",
@@ -2957,7 +3106,7 @@ async def channel_message(
 
 
     # =====================================================
-    # CHECK REQUEST STATUS
+    # REQUEST STATUS
     # =====================================================
 
     try:
@@ -2979,7 +3128,7 @@ async def channel_message(
 
             "⚠️ Could not check your "
             "channel status.\n\n"
-            "Please try again in a moment.",
+            "Please try again.",
 
             reply_markup=main_menu(),
         )
@@ -2988,7 +3137,7 @@ async def channel_message(
 
 
     # =====================================================
-    # ALREADY APPROVED
+    # APPROVED
     # =====================================================
 
     if status == "approved":
@@ -3011,7 +3160,7 @@ async def channel_message(
 
 
     # =====================================================
-    # ALREADY PENDING
+    # PENDING
     # =====================================================
 
     if status == "pending":
@@ -3034,7 +3183,7 @@ async def channel_message(
 
 
     # =====================================================
-    # USER INFORMATION
+    # USER
     # =====================================================
 
     user = update.effective_user
@@ -3057,7 +3206,7 @@ async def channel_message(
 
 
     # =====================================================
-    # SAVE AS PENDING
+    # SAVE PENDING
     # =====================================================
 
     try:
@@ -3097,6 +3246,7 @@ async def channel_message(
 
             "⚠️ Could not create your "
             "tracking request.\n\n"
+
             "Please try again.",
 
             reply_markup=main_menu(),
@@ -3124,7 +3274,8 @@ async def channel_message(
 
         f"📺 Channel: {channel}\n"
 
-        f"🔗 Link: https://t.me/"
+        f"🔗 Link: "
+        f"https://t.me/"
         f"{channel.lstrip('@')}\n\n"
 
         "🤖 Bot Admin: ✅ Verified\n"
@@ -3187,7 +3338,7 @@ async def channel_message(
 
 
     # =====================================================
-    # USER CONFIRMATION
+    # CONFIRMATION
     # =====================================================
 
     if group_sent:
@@ -3269,7 +3420,8 @@ def main():
 
 
     print(
-        f"📡 Admin Group: {GROUP_CHAT_ID}"
+        f"📡 Admin Group: "
+        f"{GROUP_CHAT_ID}"
     )
 
 
@@ -3285,7 +3437,8 @@ def main():
 
 
     print(
-        f"🤖 Bot: {BOT_USERNAME}"
+        f"🤖 Bot: "
+        f"{BOT_USERNAME}"
     )
 
 
@@ -3306,12 +3459,17 @@ def main():
 
 
     print(
-        "💰 MC is OPTIONAL for call detection."
+        "📈 DexScreener URL parser enabled."
     )
 
 
     print(
-        "🔗 Project link detection enabled."
+        "💰 MC optional mode enabled."
+    )
+
+
+    print(
+        "🔗 X/Twitter/Project link detection enabled."
     )
 
 
