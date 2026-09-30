@@ -1,7 +1,6 @@
 import os
 from datetime import datetime
 
-from dotenv import load_dotenv
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -16,7 +15,6 @@ from telegram.ext import (
     filters,
 )
 
-load_dotenv()
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID", "").strip()
@@ -29,44 +27,20 @@ GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID", "").strip()
 def main_menu():
     keyboard = [
         [
-            InlineKeyboardButton(
-                "🔥 Live Calls",
-                callback_data="live_calls"
-            ),
-            InlineKeyboardButton(
-                "📡 Track My Channel",
-                callback_data="track_channel"
-            ),
+            InlineKeyboardButton("🔥 Live Calls", callback_data="live_calls"),
+            InlineKeyboardButton("📡 Track My Channel", callback_data="track_channel"),
         ],
         [
-            InlineKeyboardButton(
-                "📊 KOL Leaderboard",
-                callback_data="leaderboard"
-            ),
-            InlineKeyboardButton(
-                "🔎 Search KOL",
-                callback_data="search_kol"
-            ),
+            InlineKeyboardButton("📊 KOL Leaderboard", callback_data="leaderboard"),
+            InlineKeyboardButton("🔎 Search KOL", callback_data="search_kol"),
         ],
         [
-            InlineKeyboardButton(
-                "📈 Call Performance",
-                callback_data="performance"
-            ),
-            InlineKeyboardButton(
-                "🏆 Top KOLs",
-                callback_data="top_kols"
-            ),
+            InlineKeyboardButton("📈 Call Performance", callback_data="performance"),
+            InlineKeyboardButton("🏆 Top KOLs", callback_data="top_kols"),
         ],
         [
-            InlineKeyboardButton(
-                "ℹ️ About KOLPulse",
-                callback_data="about"
-            ),
-            InlineKeyboardButton(
-                "🆘 Support",
-                callback_data="support"
-            ),
+            InlineKeyboardButton("ℹ️ About KOLPulse", callback_data="about"),
+            InlineKeyboardButton("🆘 Support", callback_data="support"),
         ],
     ]
 
@@ -98,10 +72,7 @@ def request_buttons(user_id, channel):
 # START
 # =========================================================
 
-async def start(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     context.user_data["waiting_for_channel"] = False
 
     await update.message.reply_text(
@@ -116,10 +87,7 @@ async def start(
 # GROUP ID
 # =========================================================
 
-async def groupid(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def groupid(update: Update, context: ContextTypes.DEFAULT_TYPE):
     chat = update.effective_chat
 
     await update.message.reply_text(
@@ -133,22 +101,17 @@ async def groupid(
 # BUTTON HANDLER
 # =========================================================
 
-async def button_handler(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
-
-    await query.answer()
-
     data = query.data
-
 
     # =====================================================
     # TRACK CHANNEL
     # =====================================================
 
     if data == "track_channel":
+
+        await query.answer()
 
         context.user_data["waiting_for_channel"] = True
 
@@ -177,6 +140,8 @@ async def button_handler(
 
     if data == "back_menu":
 
+        await query.answer()
+
         context.user_data["waiting_for_channel"] = False
 
         await query.edit_message_text(
@@ -194,27 +159,21 @@ async def button_handler(
 
     if data.startswith("accept:"):
 
+        await query.answer()
+
         parts = data.split(":", 2)
 
         if len(parts) != 3:
-            await query.answer(
-                "Invalid request.",
-                show_alert=True
-            )
             return
 
         try:
             user_id = int(parts[1])
         except ValueError:
-            await query.answer(
-                "Invalid user ID.",
-                show_alert=True
-            )
             return
 
         channel = "@" + parts[2]
 
-        # Make sure request came from configured group
+        # Group check
         if str(query.message.chat.id) != GROUP_CHAT_ID:
             await query.answer(
                 "Not authorized.",
@@ -222,7 +181,7 @@ async def button_handler(
             )
             return
 
-        # Check admin
+        # Admin check
         try:
             member = await context.bot.get_chat_member(
                 chat_id=query.message.chat.id,
@@ -257,21 +216,20 @@ async def button_handler(
                     "📊 Tracking setup will be activated next."
                 ),
             )
-
         except Exception as error:
             print(f"Could not notify user: {error}")
 
-        # Update group message
+        # Admin name
+        if query.from_user.username:
+            admin_name = f"@{query.from_user.username}"
+        else:
+            admin_name = query.from_user.full_name
+
         approved_text = (
-            "📡 NEW CHANNEL TRACKING REQUEST\n\n"
+            "📡 CHANNEL TRACKING REQUEST\n\n"
             f"📺 Channel: {channel}\n\n"
             "🟢 STATUS: APPROVED\n\n"
-            f"👮 Approved by: @{query.from_user.username}"
-            if query.from_user.username
-            else
-            "📡 NEW CHANNEL TRACKING REQUEST\n\n"
-            f"📺 Channel: {channel}\n\n"
-            "🟢 STATUS: APPROVED"
+            f"👮 Approved by: {admin_name}"
         )
 
         try:
@@ -280,11 +238,6 @@ async def button_handler(
             )
         except Exception as error:
             print(f"Could not update group message: {error}")
-
-        await query.answer(
-            "Channel approved successfully!",
-            show_alert=True
-        )
 
         return
 
@@ -295,27 +248,21 @@ async def button_handler(
 
     if data.startswith("reject:"):
 
+        await query.answer()
+
         parts = data.split(":", 2)
 
         if len(parts) != 3:
-            await query.answer(
-                "Invalid request.",
-                show_alert=True
-            )
             return
 
         try:
             user_id = int(parts[1])
         except ValueError:
-            await query.answer(
-                "Invalid user ID.",
-                show_alert=True
-            )
             return
 
         channel = "@" + parts[2]
 
-        # Group authorization
+        # Group check
         if str(query.message.chat.id) != GROUP_CHAT_ID:
             await query.answer(
                 "Not authorized.",
@@ -323,7 +270,7 @@ async def button_handler(
             )
             return
 
-        # Admin authorization
+        # Admin check
         try:
             member = await context.bot.get_chat_member(
                 chat_id=query.message.chat.id,
@@ -356,13 +303,11 @@ async def button_handler(
                     "Your tracking request was rejected by KOLPulse."
                 ),
             )
-
         except Exception as error:
             print(f"Could not notify user: {error}")
 
-        # Update group message
         rejected_text = (
-            "📡 NEW CHANNEL TRACKING REQUEST\n\n"
+            "📡 CHANNEL TRACKING REQUEST\n\n"
             f"📺 Channel: {channel}\n\n"
             "🔴 STATUS: REJECTED"
         )
@@ -374,17 +319,14 @@ async def button_handler(
         except Exception as error:
             print(f"Could not update group message: {error}")
 
-        await query.answer(
-            "Channel rejected.",
-            show_alert=True
-        )
-
         return
 
 
     # =====================================================
     # OTHER MENU BUTTONS
     # =====================================================
+
+    await query.answer()
 
     responses = {
 
@@ -419,10 +361,7 @@ async def button_handler(
     }
 
     await query.edit_message_text(
-        responses.get(
-            data,
-            "Unknown option."
-        ),
+        responses.get(data, "Unknown option."),
         reply_markup=main_menu(),
     )
 
@@ -431,10 +370,7 @@ async def button_handler(
 # CHANNEL MESSAGE
 # =========================================================
 
-async def channel_message(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def channel_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if not context.user_data.get("waiting_for_channel"):
         return
@@ -444,42 +380,23 @@ async def channel_message(
 
     channel = update.message.text.strip()
 
-
     # Telegram link -> username
     if "t.me/" in channel:
 
-        channel = channel.split(
-            "t.me/",
-            1
-        )[1]
-
-        channel = channel.split(
-            "?",
-            1
-        )[0]
-
-        channel = channel.split(
-            "/",
-            1
-        )[0]
+        channel = channel.split("t.me/", 1)[1]
+        channel = channel.split("?", 1)[0]
+        channel = channel.split("/", 1)[0]
 
         if not channel.startswith("@"):
             channel = "@" + channel
 
-
     # Plain username
     elif not channel.startswith("@"):
-
         channel = "@" + channel
-
 
     context.user_data["waiting_for_channel"] = False
 
-
-    # =====================================================
-    # USER INFORMATION
-    # =====================================================
-
+    # User information
     user = update.effective_user
 
     if user.username:
@@ -492,7 +409,6 @@ async def channel_message(
     current_time = datetime.now().strftime(
         "%Y-%m-%d %H:%M:%S"
     )
-
 
     # =====================================================
     # GROUP NOTIFICATION
@@ -508,17 +424,13 @@ async def channel_message(
         "👇 Admin action required:"
     )
 
-
     group_sent = False
-
 
     if GROUP_CHAT_ID:
 
         try:
 
-            group_chat_id = int(
-                GROUP_CHAT_ID
-            )
+            group_chat_id = int(GROUP_CHAT_ID)
 
             await context.bot.send_message(
                 chat_id=group_chat_id,
@@ -549,6 +461,94 @@ async def channel_message(
             "❌ GROUP_CHAT_ID secret is empty."
         )
 
-
     # =====================================================
-    # USER CONF
+    # USER CONFIRMATION
+    # =====================================================
+
+    if group_sent:
+
+        confirmation = (
+            "✅ Channel received!\n\n"
+            f"📡 Channel: {channel}\n\n"
+            "Your tracking request has been submitted to "
+            "KOLPulse.\n\n"
+            "⏳ Waiting for admin approval."
+        )
+
+    else:
+
+        confirmation = (
+            "⚠️ Channel received!\n\n"
+            f"📡 Channel: {channel}\n\n"
+            "Your request was received, but the admin "
+            "notification could not be sent."
+        )
+
+    await update.message.reply_text(
+        confirmation,
+        reply_markup=main_menu(),
+    )
+
+
+# =========================================================
+# MAIN
+# =========================================================
+
+def main():
+
+    if not BOT_TOKEN:
+        raise ValueError(
+            "BOT_TOKEN is not configured."
+        )
+
+    if not GROUP_CHAT_ID:
+        raise ValueError(
+            "GROUP_CHAT_ID is not configured."
+        )
+
+    print("🚀 KOLPulse Bot starting...")
+    print(f"📡 Admin Group: {GROUP_CHAT_ID}")
+
+    app = (
+        Application
+        .builder()
+        .token(BOT_TOKEN)
+        .build()
+    )
+
+    # Commands
+    app.add_handler(
+        CommandHandler("start", start)
+    )
+
+    app.add_handler(
+        CommandHandler("groupid", groupid)
+    )
+
+    # Buttons
+    app.add_handler(
+        CallbackQueryHandler(button_handler)
+    )
+
+    # Channel username messages
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            channel_message,
+        )
+    )
+
+    print("✅ KOLPulse Bot is now running...")
+    print("⏳ Polling Telegram...")
+
+    app.run_polling(
+        drop_pending_updates=False
+    )
+
+
+# =========================================================
+# START BOT
+# =========================================================
+
+if __name__ == "__main__":
+    main()
