@@ -24,6 +24,7 @@ from database import (
     add_verified_channel,
     get_verified_channel,
     get_calls_for_kol_after_verification,
+    get_connection,
 )
 
 
@@ -149,6 +150,67 @@ async def groupid(
 
 
 # =========================================================
+# MARKET CAP FORMAT
+# =========================================================
+
+def format_market_cap(value):
+
+    if value is None:
+        return "N/A"
+
+    if value >= 1_000_000_000:
+        return f"{value / 1_000_000_000:.1f}B"
+
+    if value >= 1_000_000:
+        return f"{value / 1_000_000:.1f}M"
+
+    if value >= 1_000:
+        return f"{value / 1_000:.1f}K"
+
+    return f"{value:,.0f}"
+
+
+# =========================================================
+# TOKEN SYMBOL DETECTION
+# =========================================================
+
+def detect_token_symbol(
+    text,
+    project_name,
+    contract
+):
+
+    match = re.search(
+        r"\$([A-Za-z][A-Za-z0-9_]*)",
+        text
+    )
+
+    if match:
+        return "$" + match.group(1)
+
+    match = re.search(
+        r"\$([A-Za-z][A-Za-z0-9_]*)",
+        project_name or ""
+    )
+
+    if match:
+        return "$" + match.group(1)
+
+    if project_name:
+
+        clean_name = (
+            project_name
+            .split("|")[0]
+            .strip()
+        )
+
+        if clean_name:
+            return "$" + clean_name.split()[0]
+
+    return "$TOKEN"
+
+
+# =========================================================
 # LIVE CALLS
 # =========================================================
 
@@ -222,13 +284,19 @@ async def show_live_calls(query):
         )
 
         if original_call_link:
-            text += f"🔎 Call: {original_call_link}\n"
+            text += (
+                f"🔎 Call: {original_call_link}\n"
+            )
 
         if kol_link:
-            text += f"💍 KOL: {kol_link}\n"
+            text += (
+                f"💍 KOL: {kol_link}\n"
+            )
 
         if project_link:
-            text += f"🪙 Project: {project_link}\n"
+            text += (
+                f"🪙 Project: {project_link}\n"
+            )
 
         text += "\n"
 
@@ -240,6 +308,147 @@ async def show_live_calls(query):
                 InlineKeyboardButton(
                     "🔄 Refresh",
                     callback_data="live_calls"
+                )
+            ],
+            [
+                InlineKeyboardButton(
+                    "⬅️ Back to Menu",
+                    callback_data="back_menu"
+                )
+            ]
+        ]),
+    )
+
+
+# =========================================================
+# KOL LEADERBOARD DATABASE
+# =========================================================
+
+def get_kol_leaderboard():
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT
+            v.channel_username,
+            COUNT(c.id) AS total_calls,
+            SUM(
+                CASE
+                    WHEN c.multiplier >= 2
+                    THEN 1
+                    ELSE 0
+                END
+            ) AS two_x_calls,
+            MAX(c.multiplier) AS best_multiplier
+        FROM verified_channels v
+        LEFT JOIN calls c
+            ON LOWER(
+                REPLACE(c.kol_username, '@', '')
+            ) = LOWER(v.channel_username)
+            AND c.created_at >= v.verified_at
+        GROUP BY v.channel_username
+        HAVING COUNT(c.id) > 0
+        ORDER BY
+            total_calls DESC,
+            two_x_calls DESC,
+            best_multiplier DESC
+        LIMIT 10
+    """)
+
+    results = cursor.fetchall()
+
+    conn.close()
+
+    return results
+
+
+# =========================================================
+# SHOW KOL LEADERBOARD
+# =========================================================
+
+async def show_kol_leaderboard(query):
+
+    leaderboard = get_kol_leaderboard()
+
+    if not leaderboard:
+
+        await query.edit_message_text(
+            "📊 KOL Leaderboard\n\n"
+            "No leaderboard data available yet.\n\n"
+            "Verified KOLs will appear here after "
+            "their calls are tracked.",
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "🔄 Refresh",
+                        callback_data="leaderboard"
+                    )
+                ],
+                [
+                    InlineKeyboardButton(
+                        "⬅️ Back to Menu",
+                        callback_data="back_menu"
+                    )
+                ]
+            ]),
+        )
+
+        return
+
+    text = "📊 <b>KOL LEADERBOARD</b>\n\n"
+
+    medals = [
+        "🥇",
+        "🥈",
+        "🥉"
+    ]
+
+    for index, row in enumerate(leaderboard):
+
+        channel_username = row[0]
+        total_calls = row[1] or 0
+        two_x_calls = row[2] or 0
+        best_multiplier = row[3] or 0
+
+        if index < 3:
+            rank = medals[index]
+        else:
+            rank = f"<b>#{index + 1}</b>"
+
+        channel_link = (
+            f"https://t.me/"
+            f"{channel_username.lstrip('@')}"
+        )
+
+        safe_channel = html.escape(
+            "@" + channel_username.lstrip("@")
+        )
+
+        text += (
+            f'{rank} '
+            f'<a href="{channel_link}">'
+            f'{safe_channel}'
+            f'</a>\n'
+            f"📞 Calls: {total_calls}\n"
+            f"🚀 2x+: {two_x_calls}\n"
+            f"🔥 Best: {best_multiplier:.2f}x\n\n"
+        )
+
+    text += (
+        "📌 Rankings are based on tracked calls "
+        "after KOL verification."
+    )
+
+    await query.edit_message_text(
+        text,
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+        reply_markup=InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "🔄 Refresh",
+                    callback_data="leaderboard"
                 )
             ],
             [
@@ -371,10 +580,14 @@ async def show_kol_results(
         )
 
         if original_call_link:
-            text += f"🔎 Call: {original_call_link}\n"
+            text += (
+                f"🔎 Call: {original_call_link}\n"
+            )
 
         if project_link:
-            text += f"🪙 Project: {project_link}\n"
+            text += (
+                f"🪙 Project: {project_link}\n"
+            )
 
         text += "\n"
 
@@ -383,68 +596,6 @@ async def show_kol_results(
         disable_web_page_preview=False,
         reply_markup=main_menu(),
     )
-
-
-# =========================================================
-# MARKET CAP FORMAT
-# =========================================================
-
-def format_market_cap(value):
-
-    if value is None:
-        return "N/A"
-
-    if value >= 1_000_000_000:
-
-        return f"{value / 1_000_000_000:.1f}B"
-
-    if value >= 1_000_000:
-
-        return f"{value / 1_000_000:.1f}M"
-
-    if value >= 1_000:
-
-        return f"{value / 1_000:.1f}K"
-
-    return f"{value:,.0f}"
-
-
-# =========================================================
-# TOKEN SYMBOL DETECTION
-# =========================================================
-
-def detect_token_symbol(text, project_name, contract):
-
-    # First search the complete post for $SYMBOL
-    match = re.search(
-        r"\$([A-Za-z][A-Za-z0-9_]*)",
-        text
-    )
-
-    if match:
-
-        return "$" + match.group(1)
-
-    # Search project name
-    match = re.search(
-        r"\$([A-Za-z][A-Za-z0-9_]*)",
-        project_name or ""
-    )
-
-    if match:
-
-        return "$" + match.group(1)
-
-    # Fallback
-    if project_name:
-
-        clean_name = project_name.split("|")[0].strip()
-
-        if clean_name:
-
-            return "$" + clean_name.split()[0]
-
-    return "$TOKEN"
 
 
 # =========================================================
@@ -482,7 +633,11 @@ async def channel_post_handler(
     # GET POST TEXT / CAPTION
     # =====================================================
 
-    text = message.text or message.caption or ""
+    text = (
+        message.text
+        or message.caption
+        or ""
+    )
 
     if not text:
 
@@ -575,19 +730,22 @@ async def channel_post_handler(
                 if mc_text.lower().endswith("k"):
 
                     call_mc = (
-                        float(mc_text[:-1]) * 1000
+                        float(mc_text[:-1])
+                        * 1_000
                     )
 
                 elif mc_text.lower().endswith("m"):
 
                     call_mc = (
-                        float(mc_text[:-1]) * 1_000_000
+                        float(mc_text[:-1])
+                        * 1_000_000
                     )
 
                 elif mc_text.lower().endswith("b"):
 
                     call_mc = (
-                        float(mc_text[:-1]) * 1_000_000_000
+                        float(mc_text[:-1])
+                        * 1_000_000_000
                     )
 
                 else:
@@ -780,6 +938,39 @@ async def button_handler(
 
             await query.edit_message_text(
                 "⚠️ Live Calls could not be loaded.\n\n"
+                "Please try again.",
+                reply_markup=InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton(
+                            "⬅️ Back to Menu",
+                            callback_data="back_menu"
+                        )
+                    ]
+                ]),
+            )
+
+        return
+
+    # =====================================================
+    # KOL LEADERBOARD
+    # =====================================================
+
+    if data == "leaderboard":
+
+        await query.answer()
+
+        try:
+
+            await show_kol_leaderboard(query)
+
+        except Exception as error:
+
+            print(
+                f"Leaderboard error: {type(error).__name__}: {error}"
+            )
+
+            await query.edit_message_text(
+                "⚠️ KOL Leaderboard could not be loaded.\n\n"
                 "Please try again.",
                 reply_markup=InlineKeyboardMarkup([
                     [
@@ -1114,10 +1305,6 @@ async def button_handler(
     await query.answer()
 
     responses = {
-
-        "leaderboard":
-            "📊 KOL Leaderboard\n\n"
-            "Leaderboard data will appear here.",
 
         "performance":
             "📈 Call Performance\n\n"
