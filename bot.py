@@ -45,6 +45,13 @@ LIVE_CHANNEL = "@KOLPulse_Live"
 BOT_USERNAME = "@KOLPulse_Live_bot"
 BOT_LINK = "https://t.me/KOLPulse_Live_bot"
 
+# Fixed promotional video sent with every detected call.
+# Keep fixed_video.mp4 in the same folder as bot.py.
+FIXED_VIDEO_PATH = os.getenv(
+    "FIXED_VIDEO_PATH",
+    "fixed_video.mp4"
+).strip()
+
 DEX_API_BASE = "https://api.dexscreener.com"
 
 TRACK_INTERVAL_SECONDS = 60
@@ -2205,58 +2212,31 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
     )
 
     # =====================================================
-    # VIDEO DETECTION
+    # ORIGINAL MEDIA (OPTIONAL)
     # =====================================================
+    # The detected KOL post may or may not contain a video.
+    # KOLPulse now uses our own fixed promotional video for
+    # every valid detected call.
 
-    video_file_id = None
-    video_type = None
+    original_video_file_id = None
 
     if message.video:
 
-        video_file_id = (
-            message.video.file_id
-        )
-
-        video_type = "video"
+        original_video_file_id = message.video.file_id
 
         print(
-            "🎥 VIDEO ATTACHMENT DETECTED"
+            "🎥 Original KOL video detected "
+            "(fixed promo video will be used)"
         )
 
     elif message.animation:
 
-        video_file_id = (
-            message.animation.file_id
-        )
-
-        video_type = "animation"
+        original_video_file_id = message.animation.file_id
 
         print(
-            "🎞️ ANIMATION ATTACHMENT DETECTED"
+            "🎞️ Original KOL animation detected "
+            "(fixed promo video will be used)"
         )
-
-    if video_file_id:
-
-        print(
-            f"🎥 Telegram file_id: "
-            f"{video_file_id}"
-        )
-
-    # =====================================================
-    # VIDEO REQUIRED
-    # =====================================================
-    # KOLPulse only tracks calls that contain an actual
-    # Telegram video/animation attachment.
-    # Text-only calls are ignored completely.
-
-    if not video_file_id:
-
-        print(
-            f"⏭️ Call ignored: no video/animation attached "
-            f"to {channel}"
-        )
-
-        return
 
     # =====================================================
     # TEXT / CAPTION
@@ -2515,7 +2495,7 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
             # Save Telegram's original video file_id.
             # =================================================
 
-            video_file_id=video_file_id,
+            video_file_id=original_video_file_id,
 
             status="live",
         )
@@ -2627,63 +2607,44 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
         )
 
         # =================================================
-        # IMPORTANT VIDEO SEND
+        # FIXED PROMOTIONAL VIDEO SEND
+        # =================================================
+        # Every valid detected call is published with the
+        # same fixed promotional video supplied by the owner.
         #
-        # If the original KOL post has a video,
-        # send it to KOLPulse Live with the alert
-        # as its caption.
-        #
-        # If there is no video, send normal text.
+        # The original KOL media is NOT forwarded.
         # =================================================
 
-        if video_file_id:
+        if not os.path.isfile(FIXED_VIDEO_PATH):
 
-            if video_type == "animation":
-
-                await context.bot.send_animation(
-
-                    chat_id=LIVE_CHANNEL,
-
-                    animation=video_file_id,
-
-                    caption=alert_text,
-
-                    parse_mode="HTML",
-                )
-
-                print(
-                    f"✅ Initial animation alert sent "
-                    f"to {LIVE_CHANNEL}"
-                )
-
-            else:
-
-                await context.bot.send_video(
-
-                    chat_id=LIVE_CHANNEL,
-
-                    video=video_file_id,
-
-                    caption=alert_text,
-
-                    parse_mode="HTML",
-                )
-
-                print(
-                    f"✅ Initial VIDEO alert sent "
-                    f"to {LIVE_CHANNEL}"
-                )
-
-        else:
-
-            # Safety fallback: video is mandatory, so a text-only
-            # alert must never be published.
             print(
-                f"⏭️ Initial alert blocked: "
-                f"no video/animation for {channel}"
+                "❌ Fixed promotional video not found: "
+                f"{FIXED_VIDEO_PATH}"
+            )
+
+            print(
+                "⏭️ Initial alert not published."
             )
 
             return
+
+        with open(FIXED_VIDEO_PATH, "rb") as fixed_video:
+
+            await context.bot.send_video(
+
+                chat_id=LIVE_CHANNEL,
+
+                video=fixed_video,
+
+                caption=alert_text,
+
+                parse_mode="HTML",
+            )
+
+        print(
+            f"✅ Fixed promotional video alert sent "
+            f"to {LIVE_CHANNEL}"
+        )
 
     except Exception as error:
 
@@ -3845,7 +3806,11 @@ def main():
     )
 
     print(
-        "🎥 KOL video forwarding enabled."
+        "🎥 Fixed promotional video enabled."
+    )
+
+    print(
+        f"🎬 Fixed video path: {FIXED_VIDEO_PATH}"
     )
 
     app = (
@@ -3916,4 +3881,4 @@ def main():
 
 if __name__ == "__main__":
 
-    main()
+    main() 
