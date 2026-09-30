@@ -1,4 +1,6 @@
 import os
+import re
+import html
 from datetime import datetime
 
 from telegram import (
@@ -30,6 +32,7 @@ GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID", "").strip()
 
 LIVE_CHANNEL = "@KOLPulse_Live"
 RAVEN_CHANNEL = "@CRYPTO_RAVEN_CALL"
+BOT_LINK = "https://t.me/KOLPulse_Live_bot"
 
 
 # =========================================================
@@ -383,6 +386,68 @@ async def show_kol_results(
 
 
 # =========================================================
+# MARKET CAP FORMAT
+# =========================================================
+
+def format_market_cap(value):
+
+    if value is None:
+        return "N/A"
+
+    if value >= 1_000_000_000:
+
+        return f"{value / 1_000_000_000:.1f}B"
+
+    if value >= 1_000_000:
+
+        return f"{value / 1_000_000:.1f}M"
+
+    if value >= 1_000:
+
+        return f"{value / 1_000:.1f}K"
+
+    return f"{value:,.0f}"
+
+
+# =========================================================
+# TOKEN SYMBOL DETECTION
+# =========================================================
+
+def detect_token_symbol(text, project_name, contract):
+
+    # First search the complete post for $SYMBOL
+    match = re.search(
+        r"\$([A-Za-z][A-Za-z0-9_]*)",
+        text
+    )
+
+    if match:
+
+        return "$" + match.group(1)
+
+    # Search project name
+    match = re.search(
+        r"\$([A-Za-z][A-Za-z0-9_]*)",
+        project_name or ""
+    )
+
+    if match:
+
+        return "$" + match.group(1)
+
+    # Fallback
+    if project_name:
+
+        clean_name = project_name.split("|")[0].strip()
+
+        if clean_name:
+
+            return "$" + clean_name.split()[0]
+
+    return "$TOKEN"
+
+
+# =========================================================
 # AUTOMATIC CHANNEL CALL DETECTOR
 # =========================================================
 
@@ -399,10 +464,12 @@ async def channel_post_handler(
     chat = message.chat
 
     if not chat.username:
+
         print(
             "⚠️ Ignored channel post: "
             "channel has no public username."
         )
+
         return
 
     channel = f"@{chat.username}"
@@ -412,37 +479,30 @@ async def channel_post_handler(
     )
 
     # =====================================================
-    # RAVEN → KOLPULSE LIVE
-    # =====================================================
-
-    if channel.lower() == RAVEN_CHANNEL.lower():
-
-        try:
-
-            await context.bot.copy_message(
-                chat_id=LIVE_CHANNEL,
-                from_chat_id=chat.id,
-                message_id=message.message_id,
-            )
-
-            print(
-                "✅ Raven post copied to KOLPulse Live."
-            )
-
-        except Exception as error:
-
-            print(
-                "❌ Could not copy Raven post "
-                f"to KOLPulse Live: {error}"
-            )
-
-    # =====================================================
     # GET POST TEXT / CAPTION
     # =====================================================
 
     text = message.text or message.caption or ""
 
     if not text:
+
+        print(
+            f"⏭️ Empty post ignored from {channel}"
+        )
+
+        return
+
+    # =====================================================
+    # ONLY TRACK RAVEN FOR NOW
+    # =====================================================
+
+    if channel.lower() != RAVEN_CHANNEL.lower():
+
+        print(
+            f"⏭️ Channel is not configured for tracking: "
+            f"{channel}"
+        )
+
         return
 
     # =====================================================
@@ -521,13 +581,13 @@ async def channel_post_handler(
                 elif mc_text.lower().endswith("m"):
 
                     call_mc = (
-                        float(mc_text[:-1]) * 1000000
+                        float(mc_text[:-1]) * 1_000_000
                     )
 
                 elif mc_text.lower().endswith("b"):
 
                     call_mc = (
-                        float(mc_text[:-1]) * 1000000000
+                        float(mc_text[:-1]) * 1_000_000_000
                     )
 
                 else:
@@ -571,7 +631,17 @@ async def channel_post_handler(
         project_name = contract[:12]
 
     # =====================================================
-    # TELEGRAM POST LINK
+    # TOKEN SYMBOL
+    # =====================================================
+
+    token_symbol = detect_token_symbol(
+        text,
+        project_name,
+        contract
+    )
+
+    # =====================================================
+    # TELEGRAM LINKS
     # =====================================================
 
     original_call_link = (
@@ -611,6 +681,7 @@ async def channel_post_handler(
             "✅ CALL DETECTED\n"
             f"   KOL: {channel}\n"
             f"   Project: {project_name}\n"
+            f"   Token: {token_symbol}\n"
             f"   Contract: {contract}\n"
             f"   Call MC: ${call_mc:,.0f}\n"
             f"   Call ID: {call_id}"
@@ -620,6 +691,59 @@ async def channel_post_handler(
 
         print(
             f"❌ Could not save detected call: "
+            f"{type(error).__name__}: {error}"
+        )
+
+        return
+
+    # =====================================================
+    # FORMATTED KOLPULSE LIVE ALERT
+    # =====================================================
+
+    try:
+
+        safe_channel = html.escape(channel)
+        safe_token = html.escape(token_symbol)
+        safe_contract = html.escape(contract)
+
+        mc_display = format_market_cap(
+            call_mc
+        )
+
+        alert_text = (
+            f'🔮 <a href="{kol_link}">'
+            f'{safe_channel}</a> Dropped a Call 🔮\n\n'
+
+            f"🔮 Token Symbol   🔮 {safe_token}\n"
+            f"🔮 Current MC     🔮 {mc_display}\n"
+            f"🔮 Chain Symbol   🔮 RH\n\n"
+
+            "We've started tracking it and will continue to "
+            "send performance alerts as the token progresses. "
+            "Stay tuned!\n\n"
+
+            f"Ca: <code>{safe_contract}</code>\n\n"
+
+            f'🔮 <a href="{original_call_link}">CALL</a>    '
+            f'🔮 <a href="{kol_link}">KOL</a>    '
+            f'🔮 <a href="{BOT_LINK}">BOT</a>'
+        )
+
+        await context.bot.send_message(
+            chat_id=LIVE_CHANNEL,
+            text=alert_text,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
+
+        print(
+            "✅ Formatted alert sent to KOLPulse Live."
+        )
+
+    except Exception as error:
+
+        print(
+            "❌ Could not send formatted alert: "
             f"{type(error).__name__}: {error}"
         )
 
