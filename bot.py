@@ -18,6 +18,7 @@ from telegram.ext import (
 from database import (
     init_database,
     get_live_calls,
+    add_call,
     add_verified_channel,
     get_verified_channel,
     get_calls_for_kol_after_verification,
@@ -255,7 +256,7 @@ async def search_kol(query):
         "🔎 Search KOL\n\n"
         "Send the Telegram KOL channel username or link.\n\n"
         "Example:\n"
-        " @CRYPTO_RAVEN_CALL \n\n"
+        "@CRYPTO_RAVEN_CALL\n\n"
         "or\n"
         "https://t.me/CRYPTO_RAVEN_CALL",
         reply_markup=InlineKeyboardMarkup([
@@ -376,6 +377,236 @@ async def show_kol_results(
         disable_web_page_preview=False,
         reply_markup=main_menu(),
     )
+
+
+# =========================================================
+# AUTOMATIC CHANNEL CALL DETECTOR
+# =========================================================
+
+async def channel_post_handler(
+    update: Update,
+    context: ContextTypes.DEFAULT_TYPE
+):
+
+    message = update.channel_post
+
+    if not message:
+        return
+
+    # -----------------------------------------------------
+    # GET POST TEXT / CAPTION
+    # -----------------------------------------------------
+
+    text = message.text or message.caption or ""
+
+    if not text:
+        return
+
+    # -----------------------------------------------------
+    # CHANNEL INFORMATION
+    # -----------------------------------------------------
+
+    chat = message.chat
+
+    if not chat.username:
+        print(
+            "⚠️ Ignored channel post: "
+            "channel has no public username."
+        )
+        return
+
+    channel = f"@{chat.username}"
+
+    print(
+        f"📨 New channel post received from {channel}"
+    )
+
+    # -----------------------------------------------------
+    # CHECK VERIFIED KOL
+    # -----------------------------------------------------
+
+    verified = get_verified_channel(channel)
+
+    if not verified:
+
+        print(
+            f"⏭️ Ignored unverified channel: {channel}"
+        )
+
+        return
+
+    print(
+        f"✅ Verified KOL detected: {channel}"
+    )
+
+    # -----------------------------------------------------
+    # CONTRACT DETECTION
+    # -----------------------------------------------------
+
+    contract = None
+
+    for line in text.splitlines():
+
+        if "contract:" in line.lower():
+
+            contract = line.split(
+                ":",
+                1
+            )[1].strip()
+
+            break
+
+    if not contract:
+
+        print(
+            f"⏭️ No Contract found in {channel} post."
+        )
+
+        return
+
+    # -----------------------------------------------------
+    # MARKET CAP DETECTION
+    # -----------------------------------------------------
+
+    call_mc = None
+
+    for line in text.splitlines():
+
+        if "market cap:" in line.lower():
+
+            mc_text = line.split(
+                ":",
+                1
+            )[1].strip()
+
+            mc_text = (
+                mc_text
+                .replace("$", "")
+                .replace(",", "")
+                .strip()
+            )
+
+            # Handle values like 86.9K / 1.2M
+            try:
+
+                if mc_text.lower().endswith("k"):
+
+                    call_mc = (
+                        float(
+                            mc_text[:-1]
+                        ) * 1000
+                    )
+
+                elif mc_text.lower().endswith("m"):
+
+                    call_mc = (
+                        float(
+                            mc_text[:-1]
+                        ) * 1000000
+                    )
+
+                elif mc_text.lower().endswith("b"):
+
+                    call_mc = (
+                        float(
+                            mc_text[:-1]
+                        ) * 1000000000
+                    )
+
+                else:
+
+                    call_mc = float(
+                        mc_text
+                    )
+
+            except ValueError:
+
+                call_mc = None
+
+            break
+
+    if call_mc is None:
+
+        print(
+            f"⏭️ Could not read Market Cap "
+            f"from {channel} post."
+        )
+
+        return
+
+    # -----------------------------------------------------
+    # PROJECT NAME
+    # -----------------------------------------------------
+
+    project_name = None
+
+    for line in text.splitlines():
+
+        if line.lower().startswith("name:"):
+
+            project_name = line.split(
+                ":",
+                1
+            )[1].strip()
+
+            break
+
+    if not project_name:
+
+        project_name = contract[:12]
+
+    # -----------------------------------------------------
+    # TELEGRAM POST LINK
+    # -----------------------------------------------------
+
+    original_call_link = (
+        f"https://t.me/"
+        f"{chat.username}/"
+        f"{message.message_id}"
+    )
+
+    kol_link = (
+        f"https://t.me/"
+        f"{chat.username}"
+    )
+
+    # -----------------------------------------------------
+    # SAVE CALL
+    # -----------------------------------------------------
+
+    try:
+
+        call_id = add_call(
+            kol_username=channel,
+            project_name=project_name,
+            kol_link=kol_link,
+            project_link=None,
+            original_call_link=original_call_link,
+            call_mc=call_mc,
+            current_mc=call_mc,
+            multiplier=1,
+            call_time=datetime.utcnow().strftime(
+                "%Y-%m-%d %H:%M:%S"
+            ),
+            video_file_id=None,
+            status="live",
+        )
+
+        print(
+            "✅ CALL DETECTED\n"
+            f"   KOL: {channel}\n"
+            f"   Project: {project_name}\n"
+            f"   Contract: {contract}\n"
+            f"   Call MC: ${call_mc:,.0f}\n"
+            f"   Call ID: {call_id}"
+        )
+
+    except Exception as error:
+
+        print(
+            f"❌ Could not save detected call: "
+            f"{type(error).__name__}: {error}"
+        )
 
 
 # =========================================================
@@ -808,7 +1039,6 @@ async def channel_message(
 
         channel = message_text
 
-        # Normalize Telegram link
         if "t.me/" in channel:
 
             channel = channel.split(
@@ -1066,6 +1296,17 @@ def main():
     )
 
     # =====================================================
+    # CHANNEL POSTS
+    # =====================================================
+
+    app.add_handler(
+        MessageHandler(
+            filters.UpdateType.CHANNEL_POST,
+            channel_post_handler,
+        )
+    )
+
+    # =====================================================
     # TEXT MESSAGES
     # =====================================================
 
@@ -1094,4 +1335,4 @@ def main():
 # =========================================================
 
 if __name__ == "__main__":
-    main() 
+    main()
