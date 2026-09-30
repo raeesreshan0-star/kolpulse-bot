@@ -184,3 +184,65 @@ async def show_live_calls(query):
 
 
 # =========================================================
+# =========================================================
+# MAIN
+# =========================================================
+
+def main():
+
+    if not BOT_TOKEN:
+        raise ValueError(
+            "BOT_TOKEN is not configured."
+        )
+
+    if not GROUP_CHAT_ID:
+        raise ValueError(
+            "GROUP_CHAT_ID is not configured."
+        )
+
+    init_database()
+
+    print("🚀 KOLPulse Bot starting...")
+    print(f"📡 Admin Group: {GROUP_CHAT_ID}")
+    print("🗄️ Database initialized.")
+
+    app = (
+        Application
+        .builder()
+        .token(BOT_TOKEN)
+        .build()
+    )
+
+    app.add_handler(
+        CommandHandler("start", start)
+    )
+
+    app.add_handler(
+        CommandHandler("groupid", groupid)
+    )
+
+    app.add_handler(
+        CallbackQueryHandler(button_handler)
+    )
+
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            channel_message,
+        )
+    )
+
+    print("✅ KOLPulse Bot is now running...")
+    print("⏳ Polling Telegram...")
+
+    app.run_polling(
+        drop_pending_updates=False
+    )
+
+
+# =========================================================
+# START BOT
+# =========================================================
+
+if __name__ == "__main__":
+    main()
