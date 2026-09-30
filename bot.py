@@ -255,9 +255,9 @@ async def search_kol(query):
         "🔎 Search KOL\n\n"
         "Send the Telegram KOL channel username or link.\n\n"
         "Example:\n"
-        " @CRYPTO_RAVEN_CALLl\n\n"
+        " @CRYPTO_RAVEN_CALL \n\n"
         "or\n"
-        "https://t.me/solCRYPTO_RAVEN_CALLl",
+        "https://t.me/CRYPTO_RAVEN_CALL",
         reply_markup=InlineKeyboardMarkup([
             [
                 InlineKeyboardButton(
