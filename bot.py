@@ -49,6 +49,10 @@ DEX_API_BASE = "https://api.dexscreener.com"
 
 TRACK_INTERVAL_SECONDS = 60
 
+# Minimum X milestone that should trigger a pump alert.
+# Can be changed at runtime with: /setmilestone 2
+MIN_PUMP_MILESTONE = 2
+
 
 # =========================================================
 # DEXSCREENER CHAIN MAP
@@ -113,16 +117,7 @@ def ensure_tracking_requests_table():
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS channel_tracking_requests (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            channel_username TEXT NOT NULL UNIQUE,
-            user_id INTEGER NOT NULL,
-            status TEXT NOT NULL DEFAULT 'pending',
-            created_at TEXT NOT NULL,
-            updated_at TEXT NOT NULL
-        )
-    """)
+    cursor.execute(""" CREATE TABLE IF NOT EXISTS channel_tracking_requests ( id INTEGER PRIMARY KEY AUTOINCREMENT, channel_username TEXT NOT NULL UNIQUE, user_id INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL, updated_at TEXT NOT NULL ) """)
 
     conn.commit()
     conn.close()
@@ -150,10 +145,7 @@ def ensure_call_tracking_columns():
 
         if "contract" not in columns:
 
-            cursor.execute("""
-                ALTER TABLE calls
-                ADD COLUMN contract TEXT
-            """)
+            cursor.execute(""" ALTER TABLE calls ADD COLUMN contract TEXT """)
 
             print(
                 "✅ Added calls.contract"
@@ -161,10 +153,7 @@ def ensure_call_tracking_columns():
 
         if "chain" not in columns:
 
-            cursor.execute("""
-                ALTER TABLE calls
-                ADD COLUMN chain TEXT
-            """)
+            cursor.execute(""" ALTER TABLE calls ADD COLUMN chain TEXT """)
 
             print(
                 "✅ Added calls.chain"
@@ -172,10 +161,7 @@ def ensure_call_tracking_columns():
 
         if "ath_mc" not in columns:
 
-            cursor.execute("""
-                ALTER TABLE calls
-                ADD COLUMN ath_mc REAL DEFAULT 0
-            """)
+            cursor.execute(""" ALTER TABLE calls ADD COLUMN ath_mc REAL DEFAULT 0 """)
 
             print(
                 "✅ Added calls.ath_mc"
@@ -183,10 +169,7 @@ def ensure_call_tracking_columns():
 
         if "last_milestone" not in columns:
 
-            cursor.execute("""
-                ALTER TABLE calls
-                ADD COLUMN last_milestone INTEGER DEFAULT 1
-            """)
+            cursor.execute(""" ALTER TABLE calls ADD COLUMN last_milestone INTEGER DEFAULT 1 """)
 
             print(
                 "✅ Added calls.last_milestone"
@@ -236,13 +219,7 @@ def get_request_status(channel):
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute("""
-        SELECT status
-        FROM channel_tracking_requests
-        WHERE LOWER(REPLACE(channel_username, '@', '')) = ?
-        ORDER BY id DESC
-        LIMIT 1
-    """, (
+    cursor.execute(""" SELECT status FROM channel_tracking_requests WHERE LOWER(REPLACE(channel_username, '@', '')) = ? ORDER BY id DESC LIMIT 1 """, (
         clean,
     ))
 
@@ -261,10 +238,7 @@ def get_request_status(channel):
 # SAVE PENDING REQUEST
 # =========================================================
 
-def save_pending_request(
-    channel,
-    user_id
-):
+def save_pending_request( channel, user_id ):
 
     channel = normalize_channel(channel)
 
@@ -275,13 +249,7 @@ def save_pending_request(
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute("""
-        SELECT id, status
-        FROM channel_tracking_requests
-        WHERE LOWER(REPLACE(channel_username, '@', '')) = ?
-        ORDER BY id DESC
-        LIMIT 1
-    """, (
+    cursor.execute(""" SELECT id, status FROM channel_tracking_requests WHERE LOWER(REPLACE(channel_username, '@', '')) = ? ORDER BY id DESC LIMIT 1 """, (
         channel.lstrip("@").lower(),
     ))
 
@@ -297,13 +265,7 @@ def save_pending_request(
 
             return False
 
-        cursor.execute("""
-            UPDATE channel_tracking_requests
-            SET user_id = ?,
-                status = 'pending',
-                updated_at = ?
-            WHERE id = ?
-        """, (
+        cursor.execute(""" UPDATE channel_tracking_requests SET user_id = ?, status = 'pending', updated_at = ? WHERE id = ? """, (
             user_id,
             now,
             request_id,
@@ -311,17 +273,7 @@ def save_pending_request(
 
     else:
 
-        cursor.execute("""
-            INSERT INTO channel_tracking_requests
-            (
-                channel_username,
-                user_id,
-                status,
-                created_at,
-                updated_at
-            )
-            VALUES (?, ?, 'pending', ?, ?)
-        """, (
+        cursor.execute(""" INSERT INTO channel_tracking_requests ( channel_username, user_id, status, created_at, updated_at ) VALUES (?, ?, 'pending', ?, ?) """, (
             channel,
             user_id,
             now,
@@ -338,10 +290,7 @@ def save_pending_request(
 # UPDATE REQUEST STATUS
 # =========================================================
 
-def update_request_status(
-    channel,
-    status
-):
+def update_request_status( channel, status ):
 
     channel = normalize_channel(channel)
 
@@ -352,12 +301,7 @@ def update_request_status(
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute("""
-        UPDATE channel_tracking_requests
-        SET status = ?,
-            updated_at = ?
-        WHERE LOWER(REPLACE(channel_username, '@', '')) = ?
-    """, (
+    cursor.execute(""" UPDATE channel_tracking_requests SET status = ?, updated_at = ? WHERE LOWER(REPLACE(channel_username, '@', '')) = ? """, (
         status,
         now,
         channel.lstrip("@").lower(),
@@ -420,10 +364,7 @@ def main_menu():
 # ADMIN REQUEST BUTTONS
 # =========================================================
 
-def request_buttons(
-    user_id,
-    channel
-):
+def request_buttons( user_id, channel ):
 
     channel_name = channel.lstrip("@")
 
@@ -450,10 +391,7 @@ def request_buttons(
 # START
 # =========================================================
 
-async def start(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def start( update: Update, context: ContextTypes.DEFAULT_TYPE ):
 
     context.user_data[
         "waiting_for_channel"
@@ -482,10 +420,7 @@ async def start(
 # GROUP ID
 # =========================================================
 
-async def groupid(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def groupid( update: Update, context: ContextTypes.DEFAULT_TYPE ):
 
     chat = update.effective_chat
 
@@ -545,10 +480,7 @@ def format_market_cap(value):
 # NUMBER CONVERTER
 # =========================================================
 
-def convert_number(
-    number,
-    suffix=None
-):
+def convert_number( number, suffix=None ):
 
     try:
 
@@ -581,10 +513,7 @@ def convert_number(
 # TOKEN SYMBOL
 # =========================================================
 
-def detect_token_symbol(
-    text,
-    project_name=None
-):
+def detect_token_symbol( text, project_name=None ):
 
     source = text or ""
 
@@ -951,10 +880,7 @@ def parse_project_links(text):
 # PROJECT NAME
 # =========================================================
 
-def parse_project_name(
-    text,
-    contract
-):
+def parse_project_name( text, contract ):
 
     if not text:
 
@@ -1038,10 +964,7 @@ def parse_project_name(
 # CHAIN DETECTION
 # =========================================================
 
-def detect_chain_symbol(
-    text,
-    contract=None
-):
+def detect_chain_symbol( text, contract=None ):
 
     dex_chain = detect_dex_chain(
         text
@@ -1151,10 +1074,7 @@ def is_verified_channel(channel):
 # LIVE DEXSCREENER MARKET CAP
 # =========================================================
 
-def fetch_dex_market_cap_sync(
-    contract,
-    chain_symbol=None
-):
+def fetch_dex_market_cap_sync( contract, chain_symbol=None ):
 
     if not contract:
 
@@ -1329,10 +1249,7 @@ def fetch_dex_market_cap_sync(
     return None
 
 
-async def fetch_live_market_cap(
-    contract,
-    chain_symbol=None
-):
+async def fetch_live_market_cap( contract, chain_symbol=None ):
 
     return await asyncio.to_thread(
         fetch_dex_market_cap_sync,
@@ -1345,24 +1262,12 @@ async def fetch_live_market_cap(
 # SAVE TRACKING METADATA
 # =========================================================
 
-def save_tracking_metadata(
-    call_id,
-    contract,
-    chain,
-    call_mc
-):
+def save_tracking_metadata( call_id, contract, chain, call_mc ):
 
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute("""
-        UPDATE calls
-        SET contract = ?,
-            chain = ?,
-            ath_mc = ?,
-            last_milestone = 1
-        WHERE id = ?
-    """, (
+    cursor.execute(""" UPDATE calls SET contract = ?, chain = ?, ath_mc = ?, last_milestone = 1 WHERE id = ? """, (
         contract,
         chain,
         call_mc or 0,
@@ -1384,29 +1289,7 @@ def get_tracking_calls():
 
     try:
 
-        cursor.execute("""
-            SELECT
-                id,
-                kol_username,
-                project_name,
-                kol_link,
-                project_link,
-                original_call_link,
-                call_mc,
-                current_mc,
-                multiplier,
-                call_time,
-                status,
-                created_at,
-                contract,
-                chain,
-                ath_mc,
-                last_milestone
-            FROM calls
-            WHERE contract IS NOT NULL
-              AND contract != ''
-              AND call_mc > 0
-        """)
+        cursor.execute(""" SELECT id, kol_username, project_name, kol_link, project_link, original_call_link, call_mc, current_mc, multiplier, call_time, status, created_at, contract, chain, ath_mc, last_milestone FROM calls WHERE contract IS NOT NULL AND contract != '' AND call_mc > 0 """)
 
         rows = cursor.fetchall()
 
@@ -1430,9 +1313,7 @@ def get_tracking_calls():
 # MILESTONE CALCULATION
 # =========================================================
 
-def get_pump_milestone(
-    multiplier
-):
+def get_pump_milestone( multiplier ):
 
     if multiplier is None:
 
@@ -1448,7 +1329,7 @@ def get_pump_milestone(
 
         return 1
 
-    if multiplier < 2:
+    if multiplier < MIN_PUMP_MILESTONE:
 
         return 1
 
@@ -1458,22 +1339,88 @@ def get_pump_milestone(
 
 
 # =========================================================
+# SET MINIMUM PUMP MILESTONE
+# =========================================================
+
+async def setmilestone( update: Update, context: ContextTypes.DEFAULT_TYPE ):
+
+    global MIN_PUMP_MILESTONE
+
+    # This command is intended for private bot chat.
+    if update.effective_chat and update.effective_chat.type != "private":
+
+        await update.message.reply_text(
+            "⚠️ Use /setmilestone in the bot's private chat."
+        )
+
+        return
+
+    if not context.args:
+
+        await update.message.reply_text(
+            "⚙️ Current minimum milestone: "
+            f"{MIN_PUMP_MILESTONE}X\n\n"
+            "Usage:\n"
+            "/setmilestone 2\n"
+            "/setmilestone 3\n"
+            "/setmilestone 5"
+        )
+
+        return
+
+    raw_value = context.args[0].strip().upper()
+
+    # Accept values such as 2, 2X, 3, 5X.
+    if raw_value.endswith("X"):
+
+        raw_value = raw_value[:-1]
+
+    try:
+
+        milestone = int(raw_value)
+
+    except ValueError:
+
+        await update.message.reply_text(
+            "❌ Invalid milestone.\n\n"
+            "Use a whole number, for example:\n"
+            "/setmilestone 2"
+        )
+
+        return
+
+    if milestone < 2:
+
+        await update.message.reply_text(
+            "❌ Minimum milestone is 2X.\n\n"
+            "Example: /setmilestone 2"
+        )
+
+        return
+
+    if milestone > 1000:
+
+        await update.message.reply_text(
+            "❌ Maximum milestone is 1000X."
+        )
+
+        return
+
+    MIN_PUMP_MILESTONE = milestone
+
+    await update.message.reply_text(
+        "✅ Milestone setting updated!\n\n"
+        f"🚀 Minimum pump alert: {MIN_PUMP_MILESTONE}X\n\n"
+        "The live tracker will now send alerts starting "
+        f"from {MIN_PUMP_MILESTONE}X."
+    )
+
+
+# =========================================================
 # PUMP ALERT
 # =========================================================
 
-async def send_pump_alert(
-    context,
-    call_id,
-    kol_username,
-    project_name,
-    call_mc,
-    current_mc,
-    multiplier,
-    milestone,
-    original_call_link,
-    kol_link,
-    contract
-):
+async def send_pump_alert( context, call_id, kol_username, project_name, call_mc, current_mc, multiplier, milestone, original_call_link, kol_link, contract ):
 
     safe_kol = html.escape(
         kol_username or "@KOL"
@@ -1521,11 +1468,11 @@ async def send_pump_alert(
 
         f"🔎 <a href=\"{original_call_link}\">"
         f"CALL"
-        f"</a>    "
+        f"</a> "
 
         f"👤 <a href=\"{kol_link}\">"
         f"KOL"
-        f"</a>    "
+        f"</a> "
 
         f"🤖 <a href=\"{BOT_LINK}\">"
         f"BOT"
@@ -1567,10 +1514,7 @@ async def send_pump_alert(
 # UPDATE ONE CALL
 # =========================================================
 
-async def update_one_tracked_call(
-    context,
-    row
-):
+async def update_one_tracked_call( context, row ):
 
     (
         call_id,
@@ -1682,14 +1626,7 @@ async def update_one_tracked_call(
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute("""
-        UPDATE calls
-        SET current_mc = ?,
-            multiplier = ?,
-            ath_mc = ?,
-            last_milestone = ?
-        WHERE id = ?
-    """, (
+    cursor.execute(""" UPDATE calls SET current_mc = ?, multiplier = ?, ath_mc = ?, last_milestone = ? WHERE id = ? """, (
         current_mc,
         multiplier,
         new_ath_mc,
@@ -1709,7 +1646,7 @@ async def update_one_tracked_call(
     )
 
     if (
-        milestone >= 2
+        milestone >= MIN_PUMP_MILESTONE
         and milestone > old_last_milestone
     ):
 
@@ -1745,9 +1682,7 @@ async def update_one_tracked_call(
 # BACKGROUND LIVE MC TRACKER
 # =========================================================
 
-async def live_mc_tracker(
-    application
-):
+async def live_mc_tracker( application ):
 
     print(
         "🚀 LIVE MC TRACKER STARTED"
@@ -1804,9 +1739,7 @@ async def live_mc_tracker(
 # APPLICATION POST INIT
 # =========================================================
 
-async def post_init(
-    application
-):
+async def post_init( application ):
 
     application.create_task(
         live_mc_tracker(
@@ -1945,34 +1878,7 @@ def get_kol_leaderboard():
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute("""
-        SELECT
-            v.channel_username,
-            COUNT(c.id) AS total_calls,
-            SUM(
-                CASE
-                    WHEN c.multiplier >= 2
-                    THEN 1
-                    ELSE 0
-                END
-            ) AS two_x_calls,
-            MAX(c.multiplier) AS best_multiplier
-        FROM verified_channels v
-        LEFT JOIN calls c
-            ON LOWER(
-                REPLACE(c.kol_username, '@', '')
-            ) = LOWER(
-                v.channel_username
-            )
-            AND c.created_at >= v.verified_at
-        GROUP BY v.channel_username
-        HAVING COUNT(c.id) > 0
-        ORDER BY
-            total_calls DESC,
-            two_x_calls DESC,
-            best_multiplier DESC
-        LIMIT 10
-    """)
+    cursor.execute(""" SELECT v.channel_username, COUNT(c.id) AS total_calls, SUM( CASE WHEN c.multiplier >= 2 THEN 1 ELSE 0 END ) AS two_x_calls, MAX(c.multiplier) AS best_multiplier FROM verified_channels v LEFT JOIN calls c ON LOWER( REPLACE(c.kol_username, '@', '') ) = LOWER( v.channel_username ) AND c.created_at >= v.verified_at GROUP BY v.channel_username HAVING COUNT(c.id) > 0 ORDER BY total_calls DESC, two_x_calls DESC, best_multiplier DESC LIMIT 10 """)
 
     results = cursor.fetchall()
 
@@ -2136,10 +2042,7 @@ async def search_kol(query):
 # SHOW KOL RESULTS
 # =========================================================
 
-async def show_kol_results(
-    update,
-    channel
-):
+async def show_kol_results( update, channel ):
 
     verified = get_verified_channel(
         channel
@@ -2269,10 +2172,7 @@ async def show_kol_results(
 # CHANNEL POST DETECTOR
 # =========================================================
 
-async def channel_post_handler(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TYPE ):
 
     message = update.channel_post
 
@@ -2609,7 +2509,7 @@ async def channel_post_handler(
         )
 
         print(
-            f"   Call ID: {call_id}"
+            f" Call ID: {call_id}"
         )
 
         if video_file_id:
@@ -2683,13 +2583,13 @@ async def channel_post_handler(
             f'{safe_channel}</a> '
             f'Dropped a Call 🔮\n\n'
 
-            f"🔮 Token Symbol   🔮 "
+            f"🔮 Token Symbol 🔮 "
             f"{safe_token}\n"
 
-            f"🔮 Call MC        🔮 "
+            f"🔮 Call MC 🔮 "
             f"{mc_display}\n"
 
-            f"🔮 Chain Symbol   🔮 "
+            f"🔮 Chain Symbol 🔮 "
             f"{safe_chain}\n\n"
 
             "We've started tracking it and "
@@ -2701,10 +2601,10 @@ async def channel_post_handler(
             f"</code>\n\n"
 
             f'🔮 <a href="{original_call_link}">'
-            f'CALL</a>    '
+            f'CALL</a> '
 
             f'🔮 <a href="{kol_link}">'
-            f'KOL</a>    '
+            f'KOL</a> '
 
             f'🔮 <a href="{BOT_LINK}">'
             f'BOT</a>'
@@ -2792,10 +2692,7 @@ async def channel_post_handler(
 # BUTTON HANDLER
 # =========================================================
 
-async def button_handler(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def button_handler( update: Update, context: ContextTypes.DEFAULT_TYPE ):
 
     query = update.callback_query
 
@@ -3428,10 +3325,7 @@ async def button_handler(
 # VERIFY BOT ADMIN
 # =========================================================
 
-async def verify_bot_is_channel_admin(
-    context,
-    channel
-):
+async def verify_bot_is_channel_admin( context, channel ):
 
     channel = normalize_channel(
         channel
@@ -3491,10 +3385,7 @@ async def verify_bot_is_channel_admin(
 # TEXT MESSAGE HANDLER
 # =========================================================
 
-async def channel_message(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def channel_message( update: Update, context: ContextTypes.DEFAULT_TYPE ):
 
     if not update.message:
 
@@ -3936,7 +3827,8 @@ def main():
     )
 
     print(
-        "🚀 2X → 1000X+ pump milestones enabled."
+        "🚀 Pump milestone alerts enabled from "
+        f"{MIN_PUMP_MILESTONE}X → 1000X+."
     )
 
     print(
@@ -3966,6 +3858,13 @@ def main():
         CommandHandler(
             "groupid",
             groupid
+        )
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "setmilestone",
+            setmilestone
         )
     )
 
