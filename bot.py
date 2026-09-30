@@ -15,7 +15,13 @@ from telegram.ext import (
     filters,
 )
 
-from database import init_database, get_live_calls
+from database import (
+    init_database,
+    get_live_calls,
+    add_verified_channel,
+    get_verified_channel,
+    get_calls_for_kol_after_verification,
+)
 
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
@@ -27,6 +33,7 @@ GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID", "").strip()
 # =========================================================
 
 def main_menu():
+
     keyboard = [
         [
             InlineKeyboardButton(
@@ -105,6 +112,7 @@ async def start(
 ):
 
     context.user_data["waiting_for_channel"] = False
+    context.user_data["waiting_for_kol_search"] = False
 
     await update.message.reply_text(
         "⚡ Welcome to KOLPulse!\n\n"
@@ -207,19 +215,13 @@ async def show_live_calls(query):
         )
 
         if original_call_link:
-            text += (
-                f"🔎 Call: {original_call_link}\n"
-            )
+            text += f"🔎 Call: {original_call_link}\n"
 
         if kol_link:
-            text += (
-                f"💍 KOL: {kol_link}\n"
-            )
+            text += f"💍 KOL: {kol_link}\n"
 
         if project_link:
-            text += (
-                f"🪙 Project: {project_link}\n"
-            )
+            text += f"🪙 Project: {project_link}\n"
 
         text += "\n"
 
@@ -240,6 +242,139 @@ async def show_live_calls(query):
                 )
             ]
         ]),
+    )
+
+
+# =========================================================
+# SEARCH KOL
+# =========================================================
+
+async def search_kol(query):
+
+    await query.edit_message_text(
+        "🔎 Search KOL\n\n"
+        "Send the Telegram KOL channel username or link.\n\n"
+        "Example:\n"
+        "@solhousesignal\n\n"
+        "or\n"
+        "https://t.me/solhousesignal",
+        reply_markup=InlineKeyboardMarkup([
+            [
+                InlineKeyboardButton(
+                    "⬅️ Back to Menu",
+                    callback_data="back_menu"
+                )
+            ]
+        ]),
+    )
+
+
+# =========================================================
+# SHOW KOL RESULTS
+# =========================================================
+
+async def show_kol_results(
+    update,
+    channel
+):
+
+    verified = get_verified_channel(channel)
+
+    if not verified:
+
+        await update.message.reply_text(
+            "❌ KOL Not Verified\n\n"
+            f"{channel} isn't verified on KOLPulse yet.\n\n"
+            "Please verify the channel first using\n"
+            "📡 Track My Channel.",
+            reply_markup=main_menu(),
+        )
+
+        return
+
+    verified_at = verified[3]
+
+    calls = get_calls_for_kol_after_verification(
+        channel,
+        verified_at
+    )
+
+    if not calls:
+
+        await update.message.reply_text(
+            "🔎 KOL Search\n\n"
+            f"📡 KOL: {channel}\n"
+            "🟢 Status: Verified\n\n"
+            "No tracked calls were found after "
+            "this channel was verified.\n\n"
+            "KOLPulse will show new tracked calls here.",
+            reply_markup=main_menu(),
+        )
+
+        return
+
+    text = (
+        "🔎 KOL RESULTS\n\n"
+        f"📡 KOL: {channel}\n"
+        "🟢 Status: Verified\n\n"
+    )
+
+    for call in calls[:10]:
+
+        (
+            call_id,
+            kol_username,
+            kol_link,
+            project_name,
+            project_link,
+            original_call_link,
+            call_mc,
+            current_mc,
+            multiplier,
+            call_time,
+            video_file_id,
+            status,
+            created_at,
+        ) = call
+
+        call_mc_text = (
+            f"${call_mc:,.0f}"
+            if call_mc is not None
+            else "N/A"
+        )
+
+        current_mc_text = (
+            f"${current_mc:,.0f}"
+            if current_mc is not None
+            else "N/A"
+        )
+
+        multiplier_text = (
+            f"{multiplier:.2f}x"
+            if multiplier is not None
+            else "N/A"
+        )
+
+        text += (
+            f"🟣 {project_name}\n"
+            f"💰 Call MC: {call_mc_text}\n"
+            f"📈 Current MC: {current_mc_text}\n"
+            f"🚀 Multiplier: {multiplier_text}\n"
+            f"⏱️ {call_time or 'N/A'}\n"
+        )
+
+        if original_call_link:
+            text += f"🔎 Call: {original_call_link}\n"
+
+        if project_link:
+            text += f"🪙 Project: {project_link}\n"
+
+        text += "\n"
+
+    await update.message.reply_text(
+        text,
+        disable_web_page_preview=False,
+        reply_markup=main_menu(),
     )
 
 
@@ -296,9 +431,8 @@ async def button_handler(
 
         await query.answer()
 
-        context.user_data[
-            "waiting_for_channel"
-        ] = True
+        context.user_data["waiting_for_channel"] = True
+        context.user_data["waiting_for_kol_search"] = False
 
         await query.edit_message_text(
             "📡 Track My Channel\n\n"
@@ -319,6 +453,21 @@ async def button_handler(
         return
 
     # =====================================================
+    # SEARCH KOL
+    # =====================================================
+
+    if data == "search_kol":
+
+        await query.answer()
+
+        context.user_data["waiting_for_channel"] = False
+        context.user_data["waiting_for_kol_search"] = True
+
+        await search_kol(query)
+
+        return
+
+    # =====================================================
     # BACK TO MENU
     # =====================================================
 
@@ -326,9 +475,8 @@ async def button_handler(
 
         await query.answer()
 
-        context.user_data[
-            "waiting_for_channel"
-        ] = False
+        context.user_data["waiting_for_channel"] = False
+        context.user_data["waiting_for_kol_search"] = False
 
         await query.edit_message_text(
             "⚡ KOLPulse Main Menu\n\n"
@@ -404,7 +552,40 @@ async def button_handler(
 
             return
 
-        # Notify requester
+        # =================================================
+        # SAVE VERIFIED CHANNEL
+        # =================================================
+
+        try:
+
+            verified_at = add_verified_channel(
+                channel_username=channel,
+                user_id=user_id,
+            )
+
+            print(
+                f"✅ Verified channel saved: "
+                f"{channel} at {verified_at}"
+            )
+
+        except Exception as error:
+
+            print(
+                f"❌ Could not save verified channel: "
+                f"{error}"
+            )
+
+            await query.answer(
+                "Could not save verification.",
+                show_alert=True
+            )
+
+            return
+
+        # =================================================
+        # NOTIFY REQUESTER
+        # =================================================
+
         try:
 
             await context.bot.send_message(
@@ -412,9 +593,9 @@ async def button_handler(
                 text=(
                     "✅ Channel Approved!\n\n"
                     f"📡 Channel: {channel}\n\n"
-                    "Your channel tracking request has "
-                    "been approved by KOLPulse.\n\n"
-                    "📊 Tracking setup will be activated next."
+                    "Your channel has been verified on "
+                    "KOLPulse.\n\n"
+                    "🔎 Your KOL results can now be tracked."
                 ),
             )
 
@@ -573,10 +754,6 @@ async def button_handler(
             "📊 KOL Leaderboard\n\n"
             "Leaderboard data will appear here.",
 
-        "search_kol":
-            "🔎 Search KOL\n\n"
-            "Search for a tracked KOL or channel.",
-
         "performance":
             "📈 Call Performance\n\n"
             "Individual call performance will appear here.",
@@ -605,7 +782,7 @@ async def button_handler(
 
 
 # =========================================================
-# CHANNEL MESSAGE
+# TEXT MESSAGE HANDLER
 # =========================================================
 
 async def channel_message(
@@ -613,18 +790,72 @@ async def channel_message(
     context: ContextTypes.DEFAULT_TYPE
 ):
 
-    if not context.user_data.get(
-        "waiting_for_channel"
-    ):
-        return
-
     if not update.message:
         return
 
     if not update.message.text:
         return
 
-    channel = update.message.text.strip()
+    message_text = update.message.text.strip()
+
+    # =====================================================
+    # SEARCH KOL
+    # =====================================================
+
+    if context.user_data.get(
+        "waiting_for_kol_search"
+    ):
+
+        channel = message_text
+
+        # Normalize Telegram link
+        if "t.me/" in channel:
+
+            channel = channel.split(
+                "t.me/",
+                1
+            )[1]
+
+            channel = channel.split(
+                "?",
+                1
+            )[0]
+
+            channel = channel.split(
+                "/",
+                1
+            )[0]
+
+            if not channel.startswith("@"):
+
+                channel = "@" + channel
+
+        elif not channel.startswith("@"):
+
+            channel = "@" + channel
+
+        context.user_data[
+            "waiting_for_kol_search"
+        ] = False
+
+        await show_kol_results(
+            update,
+            channel
+        )
+
+        return
+
+    # =====================================================
+    # TRACK MY CHANNEL
+    # =====================================================
+
+    if not context.user_data.get(
+        "waiting_for_channel"
+    ):
+
+        return
+
+    channel = message_text
 
     # =====================================================
     # TELEGRAM LINK -> USERNAME
