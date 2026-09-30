@@ -18,7 +18,10 @@ def init_database():
     conn = get_connection()
     cursor = conn.cursor()
 
-    # Calls table
+    # =====================================================
+    # CALLS
+    # =====================================================
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS calls (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -37,7 +40,10 @@ def init_database():
         )
     """)
 
-    # Verified KOL channels
+    # =====================================================
+    # VERIFIED CHANNELS
+    # =====================================================
+
     cursor.execute("""
         CREATE TABLE IF NOT EXISTS verified_channels (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -47,12 +53,26 @@ def init_database():
         )
     """)
 
+    # =====================================================
+    # PENDING CHANNEL REQUESTS
+    # =====================================================
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS channel_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            channel_username TEXT UNIQUE NOT NULL,
+            user_id INTEGER,
+            status TEXT DEFAULT 'pending',
+            submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+
     conn.commit()
     conn.close()
 
 
 # =========================================================
-# VERIFIED CHANNELS
+# NORMALIZE CHANNEL USERNAME
 # =========================================================
 
 def normalize_channel_username(channel_username):
@@ -81,6 +101,10 @@ def normalize_channel_username(channel_username):
     return channel_username.lower()
 
 
+# =========================================================
+# VERIFIED CHANNELS
+# =========================================================
+
 def add_verified_channel(
     channel_username,
     user_id=None
@@ -108,6 +132,14 @@ def add_verified_channel(
         channel_username,
         user_id,
         verified_at,
+    ))
+
+    # Remove pending request after approval
+    cursor.execute("""
+        DELETE FROM channel_requests
+        WHERE channel_username = ?
+    """, (
+        channel_username,
     ))
 
     conn.commit()
@@ -154,6 +186,88 @@ def get_verified_at(channel_username):
         return None
 
     return result[3]
+
+
+# =========================================================
+# PENDING REQUESTS
+# =========================================================
+
+def add_pending_channel(
+    channel_username,
+    user_id=None
+):
+
+    channel_username = normalize_channel_username(
+        channel_username
+    )
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT OR IGNORE INTO channel_requests (
+            channel_username,
+            user_id,
+            status
+        )
+        VALUES (?, ?, 'pending')
+    """, (
+        channel_username,
+        user_id,
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+def get_pending_channel(channel_username):
+
+    channel_username = normalize_channel_username(
+        channel_username
+    )
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT
+            id,
+            channel_username,
+            user_id,
+            status,
+            submitted_at
+        FROM channel_requests
+        WHERE channel_username = ?
+        AND status = 'pending'
+    """, (
+        channel_username,
+    ))
+
+    result = cursor.fetchone()
+
+    conn.close()
+
+    return result
+
+
+def remove_pending_channel(channel_username):
+
+    channel_username = normalize_channel_username(
+        channel_username
+    )
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        DELETE FROM channel_requests
+        WHERE channel_username = ?
+    """, (
+        channel_username,
+    ))
+
+    conn.commit()
+    conn.close()
 
 
 # =========================================================
@@ -271,70 +385,6 @@ def get_calls_for_kol_after_verification(
 
 
 # =========================================================
-# KOL LEADERBOARD
-# =========================================================
-
-def get_kol_leaderboard(limit=10):
-
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute("""
-        SELECT
-            LOWER(
-                REPLACE(c.kol_username, '@', '')
-            ) AS kol_username,
-
-            MAX(c.kol_link) AS kol_link,
-
-            COUNT(c.id) AS total_calls,
-
-            SUM(
-                CASE
-                    WHEN c.multiplier >= 2
-                    THEN 1
-                    ELSE 0
-                END
-            ) AS two_x_calls,
-
-            MAX(c.multiplier) AS best_multiplier,
-
-            AVG(c.multiplier) AS average_multiplier
-
-        FROM calls c
-
-        INNER JOIN verified_channels v
-            ON LOWER(
-                REPLACE(c.kol_username, '@', '')
-            ) = LOWER(
-                REPLACE(v.channel_username, '@', '')
-            )
-
-        WHERE c.created_at >= v.verified_at
-
-        GROUP BY
-            LOWER(
-                REPLACE(c.kol_username, '@', '')
-            )
-
-        ORDER BY
-            average_multiplier DESC,
-            two_x_calls DESC,
-            total_calls DESC
-
-        LIMIT ?
-    """, (
-        limit,
-    ))
-
-    leaderboard = cursor.fetchall()
-
-    conn.close()
-
-    return leaderboard
-
-
-# =========================================================
 # UPDATE CALL MULTIPLIER
 # =========================================================
 
@@ -359,4 +409,4 @@ def update_call_multiplier(
     ))
 
     conn.commit()
-    conn.close()
+    conn.close() 
