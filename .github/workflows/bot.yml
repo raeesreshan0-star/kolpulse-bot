@@ -31,5 +31,11 @@ jobs:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           GROUP_CHAT_ID: ${{ secrets.GROUP_CHAT_ID }}
           OWNER_USER_ID: ${{ secrets.OWNER_USER_ID }}
+          PROMOTIONAL_VIDEO_FILE_ID: ${{ secrets.PROMOTIONAL_VIDEO_FILE_ID }}
+          PREMIUM_EMOJI_CALL: ${{ secrets.PREMIUM_EMOJI_CALL }}
+          PREMIUM_EMOJI_PLANE: ${{ secrets.PREMIUM_EMOJI_PLANE }}
+          PREMIUM_EMOJI_CONTRACT: ${{ secrets.PREMIUM_EMOJI_CONTRACT }}
+          PREMIUM_EMOJI_KOL: ${{ secrets.PREMIUM_EMOJI_KOL }}
+          PREMIUM_EMOJI_BOT: ${{ secrets.PREMIUM_EMOJI_BOT }}
           PYTHONUNBUFFERED: "1"
-        run: python -u bot.py 
+        run: python -u bot.py
