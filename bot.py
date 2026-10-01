@@ -6,7 +6,7 @@ import asyncio
 import urllib.parse
 import urllib.request
 
-from datetime import datetime
+from datetime import datetime, timedelta
 
 from telegram import (
     Update,
@@ -48,6 +48,11 @@ BOT_LINK = "https://t.me/KOLPulse_Live_bot"
 DEX_API_BASE = "https://api.dexscreener.com"
 
 TRACK_INTERVAL_SECONDS = 60
+
+# Top KOLs board: the same channel post is refreshed every 3 days.
+TOP_KOLS_ROTATION_SECONDS = 3 * 24 * 60 * 60
+TOP_KOLS_MESSAGE_ID = int(os.getenv("TOP_KOLS_MESSAGE_ID", "0") or 0)
+TOP_KOLS_LIMIT = 3
 
 # Minimum X milestone that should trigger a pump alert.
 # Can be changed at runtime with: /setmilestone 2
@@ -150,6 +155,323 @@ def ensure_video_request_tables():
 
     conn.commit()
     conn.close()
+
+
+def ensure_top_kols_board_table():
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(""" CREATE TABLE IF NOT EXISTS top_kols_board ( id INTEGER PRIMARY KEY CHECK (id = 1), message_id INTEGER NOT NULL DEFAULT 0, period_started_at TEXT NOT NULL, updated_at TEXT NOT NULL ) """)
+
+    conn.commit()
+    conn.close()
+
+
+def get_top_kols_board_state():
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(""" SELECT message_id, period_started_at, updated_at FROM top_kols_board WHERE id = 1 """)
+        row = cursor.fetchone()
+    finally:
+        conn.close()
+
+    return row
+
+
+def save_top_kols_board_state(message_id, period_started_at):
+
+    now = datetime.utcnow().strftime("%Y-%m-%d %H:%M:%S")
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(""" INSERT INTO top_kols_board (id, message_id, period_started_at, updated_at) VALUES (1, ?, ?, ?) ON CONFLICT(id) DO UPDATE SET message_id = excluded.message_id, period_started_at = excluded.period_started_at, updated_at = excluded.updated_at """, (message_id, period_started_at, now))
+
+    conn.commit()
+    conn.close()
+
+
+def get_top_kols_message_id():
+
+    state = get_top_kols_board_state()
+
+    if not state:
+        return TOP_KOLS_MESSAGE_ID
+
+    try:
+        message_id = int(state[0] or 0)
+    except (TypeError, ValueError):
+        message_id = 0
+
+    return message_id or TOP_KOLS_MESSAGE_ID
+
+
+def get_top_kols_for_period(start_at, end_at, limit=TOP_KOLS_LIMIT):
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(""" SELECT LOWER(REPLACE(kol_username, '@', '')) AS kol, COUNT(*) AS total_calls, SUM( CASE WHEN ( CASE WHEN COALESCE(ath_mc, 0) > 0 THEN COALESCE(ath_mc, 0) / call_mc ELSE COALESCE(current_mc, 0) / call_mc END ) >= 2 THEN 1 ELSE 0 END ) AS two_x_hits, MAX( CASE WHEN call_mc > 0 AND COALESCE(ath_mc, 0) > 0 THEN ath_mc / call_mc WHEN call_mc > 0 AND COALESCE(current_mc, 0) > 0 THEN current_mc / call_mc ELSE 0 END ) AS best_x, AVG( CASE WHEN call_mc > 0 AND COALESCE(ath_mc, 0) > 0 THEN ath_mc / call_mc WHEN call_mc > 0 AND COALESCE(current_mc, 0) > 0 THEN current_mc / call_mc ELSE 0 END ) AS avg_x FROM calls WHERE created_at >= ? AND created_at < ? AND call_mc > 0 AND kol_username IS NOT NULL AND TRIM(kol_username) != '' GROUP BY LOWER(REPLACE(kol_username, '@', '')) ORDER BY best_x DESC, two_x_hits DESC, avg_x DESC, total_calls DESC LIMIT ? """, (start_at, end_at, int(limit)))
+
+        rows = cursor.fetchall()
+    except Exception as error:
+        print(
+            "❌ Could not calculate Top KOLs: "
+            f"{type(error).__name__}: {error}"
+        )
+        rows = []
+    finally:
+        conn.close()
+
+    return rows
+
+
+def build_top_kols_text(start_at, end_at):
+
+    rows = get_top_kols_for_period(
+        start_at,
+        end_at,
+        TOP_KOLS_LIMIT
+    )
+
+    start_display = html.escape(
+        start_at.replace(" ", " ")[:16]
+    )
+    end_display = html.escape(
+        end_at.replace(" ", " ")[:16]
+    )
+
+    lines = [
+        "🏆 <b>KOLPulse TOP KOLs</b>",
+        "",
+        f"📅 Round: <b>{start_display} UTC → {end_display} UTC</b>",
+        "",
+    ]
+
+    medals = ["🥇", "🥈", "🥉"]
+
+    if not rows:
+        lines.append("⏳ No completed call data for this round yet.")
+    else:
+        for index, row in enumerate(rows):
+            kol, total_calls, two_x_hits, best_x, avg_x = row
+            kol = normalize_channel(kol)
+            safe_kol = html.escape(kol)
+            kol_link = f"https://t.me/{kol.lstrip('@')}"
+
+            try:
+                best_x = float(best_x or 0)
+            except (TypeError, ValueError):
+                best_x = 0.0
+
+            try:
+                avg_x = float(avg_x or 0)
+            except (TypeError, ValueError):
+                avg_x = 0.0
+
+            lines.extend([
+                f'{medals[index]} <a href="{kol_link}"><b>{safe_kol}</b></a>',
+                f" 🚀 Best X: <b>{best_x:.2f}X</b> | Avg: <b>{avg_x:.2f}X</b>",
+                f" 📞 Calls: <b>{int(total_calls or 0)}</b> | 🎯 2X+: <b>{int(two_x_hits or 0)}</b>",
+                "",
+            ])
+
+    lines.extend([
+        "───────────────────────",
+        "🔄 <b>This board stays for 3 days.</b>",
+        "📊 Next round is selected automatically from the next 3-day trace results.",
+        "",
+        "KOLPulse Live • Performance is calculated from tracked calls."
+    ])
+
+    return "\n".join(lines)
+
+
+async def ensure_top_kols_post(application, initial=False):
+
+    now = datetime.utcnow()
+    state = get_top_kols_board_state()
+
+    if state:
+        try:
+            message_id = int(state[0] or 0)
+        except (TypeError, ValueError):
+            message_id = 0
+
+        try:
+            period_started_at = datetime.strptime(
+                state[1],
+                "%Y-%m-%d %H:%M:%S"
+            )
+        except (TypeError, ValueError):
+            period_started_at = now
+
+    else:
+        message_id = TOP_KOLS_MESSAGE_ID
+        period_started_at = now
+
+        # On first installation, show the latest 3-day trace immediately,
+        # then start a fresh 3-day round from this moment.
+        initial_start = now - timedelta(days=3)
+        initial_text = build_top_kols_text(
+            initial_start.strftime("%Y-%m-%d %H:%M:%S"),
+            now.strftime("%Y-%m-%d %H:%M:%S")
+        )
+
+        try:
+            chat = await application.bot.get_chat(LIVE_CHANNEL)
+            pinned = getattr(chat, "pinned_message", None)
+
+            if not message_id and pinned:
+                message_id = getattr(pinned, "message_id", 0) or 0
+
+            if message_id and pinned and getattr(pinned, "message_id", 0) == message_id:
+                if getattr(pinned, "photo", None) or getattr(pinned, "video", None) or getattr(pinned, "animation", None):
+                    await application.bot.edit_message_caption(
+                        chat_id=LIVE_CHANNEL,
+                        message_id=message_id,
+                        caption=initial_text,
+                        parse_mode="HTML",
+                    )
+                else:
+                    await application.bot.edit_message_text(
+                        chat_id=LIVE_CHANNEL,
+                        message_id=message_id,
+                        text=initial_text,
+                        parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+
+            else:
+                sent = await application.bot.send_message(
+                    chat_id=LIVE_CHANNEL,
+                    text=initial_text,
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+                message_id = sent.message_id
+                await application.bot.pin_chat_message(
+                    chat_id=LIVE_CHANNEL,
+                    message_id=message_id,
+                    disable_notification=True,
+                )
+
+        except Exception as error:
+            print(
+                "❌ Could not initialize Top KOLs board: "
+                f"{type(error).__name__}: {error}"
+            )
+            return
+
+        save_top_kols_board_state(
+            message_id,
+            period_started_at.strftime("%Y-%m-%d %H:%M:%S")
+        )
+        print(
+            f"🏆 Top KOLs board connected to message #{message_id}."
+        )
+        return
+
+    if not message_id:
+        return
+
+    rotation_at = period_started_at + timedelta(seconds=TOP_KOLS_ROTATION_SECONDS)
+
+    if now < rotation_at:
+        return
+
+    # The completed period becomes the published result for the next 3 days.
+    completed_start = period_started_at.strftime("%Y-%m-%d %H:%M:%S")
+    completed_end = now.strftime("%Y-%m-%d %H:%M:%S")
+    text = build_top_kols_text(completed_start, completed_end)
+
+    try:
+        chat = await application.bot.get_chat(LIVE_CHANNEL)
+        pinned = getattr(chat, "pinned_message", None)
+
+        if pinned and getattr(pinned, "message_id", 0) == message_id:
+            if getattr(pinned, "photo", None) or getattr(pinned, "video", None) or getattr(pinned, "animation", None):
+                await application.bot.edit_message_caption(
+                    chat_id=LIVE_CHANNEL,
+                    message_id=message_id,
+                    caption=text,
+                    parse_mode="HTML",
+                )
+            else:
+                await application.bot.edit_message_text(
+                    chat_id=LIVE_CHANNEL,
+                    message_id=message_id,
+                    text=text,
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+        else:
+            # If the owner changed the pinned post, reconnect to the new pin.
+            if pinned:
+                message_id = getattr(pinned, "message_id", 0) or message_id
+                if getattr(pinned, "photo", None) or getattr(pinned, "video", None) or getattr(pinned, "animation", None):
+                    await application.bot.edit_message_caption(
+                        chat_id=LIVE_CHANNEL,
+                        message_id=message_id,
+                        caption=text,
+                        parse_mode="HTML",
+                    )
+                else:
+                    await application.bot.edit_message_text(
+                        chat_id=LIVE_CHANNEL,
+                        message_id=message_id,
+                        text=text,
+                        parse_mode="HTML",
+                        disable_web_page_preview=True,
+                    )
+            else:
+                sent = await application.bot.send_message(
+                    chat_id=LIVE_CHANNEL,
+                    text=text,
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+                message_id = sent.message_id
+                await application.bot.pin_chat_message(
+                    chat_id=LIVE_CHANNEL,
+                    message_id=message_id,
+                    disable_notification=True,
+                )
+
+        # Move the round start forward by exactly 3 days.
+        next_start = period_started_at
+        while next_start + timedelta(seconds=TOP_KOLS_ROTATION_SECONDS) <= now:
+            next_start += timedelta(seconds=TOP_KOLS_ROTATION_SECONDS)
+
+        save_top_kols_board_state(
+            message_id,
+            next_start.strftime("%Y-%m-%d %H:%M:%S")
+        )
+
+        print(
+            f"🔄 Top KOLs board rotated. Next round: {next_start} UTC"
+        )
+
+    except Exception as error:
+        print(
+            "❌ Top KOLs rotation failed: "
+            f"{type(error).__name__}: {error}"
+        )
+
+
+def top_kols_board_url():
+
+    message_id = get_top_kols_message_id()
+
+    if not message_id:
+        return None
+
+    return f"https://t.me/{LIVE_CHANNEL.lstrip('@')}/{message_id}"
 
 
 def register_video_request_owner(user_id):
@@ -960,16 +1282,16 @@ def main_menu():
         ],
 
         [
-            InlineKeyboardButton(
-                "🔎 Search KOL",
-                callback_data="search_kol"
-            )
-        ],
-
-        [
-            InlineKeyboardButton(
-                "🏆 Top KOLs",
-                callback_data="top_kols"
+            (
+                InlineKeyboardButton(
+                    "🏆 Top KOLs",
+                    url=top_kols_board_url()
+                )
+                if top_kols_board_url()
+                else InlineKeyboardButton(
+                    "🏆 Top KOLs",
+                    callback_data="top_kols"
+                )
             )
         ],
 
@@ -3013,6 +3335,25 @@ async def live_mc_tracker( application ):
 # APPLICATION POST INIT
 # =========================================================
 
+async def top_kols_rotation_loop(application):
+
+    print("🏆 TOP KOLS ROTATION LOOP STARTED")
+
+    # Create/connect the board immediately at startup.
+    await ensure_top_kols_post(application, initial=True)
+
+    while True:
+        try:
+            await ensure_top_kols_post(application)
+        except Exception as error:
+            print(
+                "❌ Top KOLs rotation loop error: "
+                f"{type(error).__name__}: {error}"
+            )
+
+        await asyncio.sleep(60)
+
+
 async def post_init( application ):
 
     application.create_task(
@@ -3021,8 +3362,18 @@ async def post_init( application ):
         )
     )
 
+    application.create_task(
+        top_kols_rotation_loop(
+            application
+        )
+    )
+
     print(
         "✅ Background MC tracker launched."
+    )
+
+    print(
+        "🏆 Automatic 3-day Top KOLs board enabled."
     )
 
 
@@ -3823,6 +4174,10 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
             f'{safe_channel}</a> '
             f'Dropped a Call 🔮\n\n'
 
+            f"🔮 Project Name 🔮 "
+            f'<a href="{html.escape(_project_deep_link(project_name, contract), quote=True)}">'
+            f"{html.escape(str(project_name or 'Unknown Project'))}</a>\n"
+
             f"🔮 Token Symbol 🔮 "
             f'<a href="{html.escape(_project_deep_link(project_name, contract), quote=True)}">'
             f"{safe_token}</a>\n"
@@ -4567,27 +4922,41 @@ async def button_handler( update: Update, context: ContextTypes.DEFAULT_TYPE ):
 
         await query.answer()
 
-        await query.edit_message_text(
+        board_url = top_kols_board_url()
 
-            "🏆 Top KOLs\n\n"
-
-            "Top performing verified KOLs "
-            "will appear here.\n\n"
-
-            "KOLPulse is tracking calls "
-            "automatically.",
-
-            reply_markup=InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton(
-                        "⬅️ Back",
-                        callback_data=(
-                            "back_menu"
+        if board_url:
+            await query.edit_message_text(
+                "🏆 <b>Top KOLs</b>\n\n"
+                "Tap the button below to open the live KOLPulse Top KOLs board.",
+                parse_mode="HTML",
+                reply_markup=InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton(
+                            "🏆 Open Top KOLs Board",
+                            url=board_url
                         )
-                    )
-                ]
-            ]),
-        )
+                    ],
+                    [
+                        InlineKeyboardButton(
+                            "⬅️ Back",
+                            callback_data="back_menu"
+                        )
+                    ]
+                ]),
+            )
+        else:
+            await query.edit_message_text(
+                "🏆 Top KOLs\n\n"
+                "The Top KOLs board is being initialized. Please try again in a moment.",
+                reply_markup=InlineKeyboardMarkup([
+                    [
+                        InlineKeyboardButton(
+                            "⬅️ Back",
+                            callback_data="back_menu"
+                        )
+                    ]
+                ]),
+            )
 
         return
 
@@ -4877,6 +5246,8 @@ def main():
     ensure_tracking_requests_table()
 
     ensure_video_request_tables()
+
+    ensure_top_kols_board_table()
 
     bootstrap_saved_promotional_video_from_calls()
 
