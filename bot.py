@@ -930,6 +930,10 @@ def update_request_status( channel, status ):
 
 
 async def channel_message( update: Update, context: ContextTypes.DEFAULT_TYPE ):
+    if update.message and update.message.text:
+        update.message.text = update.message.text.strip()
+        print(f"📡 TRACK CHANNEL INPUT RECEIVED: {update.message.text}")
+
 
     if not update.message:
 
@@ -5625,12 +5629,19 @@ def main():
     # This is more reliable than MessageHandler(UpdateType.CHANNEL_POST)
     # across python-telegram-bot versions and guarantees that the
     # channel_post field is routed to our detector.
+    async def _channel_post_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if update.channel_post:
+            await channel_post_handler(update, context)
+
+    # Only actual channel_post updates are routed here.
+    # Private messages must continue to the normal MessageHandler /
+    # Track My Channel conversation handlers.
     app.add_handler(
         TypeHandler(
             Update,
-            channel_post_handler,
+            _channel_post_router,
         ),
-        group=0,
+        group=-20,
     )
 
     app.add_handler(
@@ -5684,4 +5695,4 @@ def main():
 
 if __name__ == "__main__":
 
-    main() 
+    main()  
