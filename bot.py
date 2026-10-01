@@ -66,9 +66,11 @@ MIN_PUMP_MILESTONE = 2
 # =========================================================
 # KOLPulseLive PREMIUM CUSTOM EMOJIS
 # =========================================================
-PREMIUM_CALL_EMOJI_ID = "6044119257308995249"
-PREMIUM_KOL_EMOJI_ID = "6217412791041528130"
-PREMIUM_HIT_2X_EMOJI_ID = "6221788387758578190"
+PREMIUM_CALL_EMOJI_ID = "6192617648488980644"
+PREMIUM_KOL_EMOJI_ID = "6192905389822978354"
+PREMIUM_HIT_2X_EMOJI_ID = "6192905389822978354"
+PREMIUM_CA_EMOJI_ID = "5258477770735885832"
+PREMIUM_BOT_EMOJI_ID = "5258093637450866522"
 
 # Network emoji IDs supplied by the owner, in the same order supplied:
 # SOL, BASE, BSC, ETH, ARB, POLY, AVAX, OP, ZKSYNC, LINEA, RH.
@@ -4445,7 +4447,7 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
             "We've started tracking it and will send performance alerts "
             "when new X milestones are reached.\n\n"
 
-            f'CA: <code>{safe_contract}</code>\n\n'
+            f'{tg_custom_emoji(PREMIUM_CA_EMOJI_ID, "📋")} CA: <code>{safe_contract}</code>\n\n'
 
             f'<a href="{call_url}">'
             f'{tg_custom_emoji(PREMIUM_CALL_EMOJI_ID, "🔎")} View Call</a> '
@@ -4453,7 +4455,7 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
             f'<a href="{kol_url}">'
             f'{tg_custom_emoji(PREMIUM_KOL_EMOJI_ID, "🎤")} KOL Stats</a> '
 
-            f'<a href="{bot_url}">🤖 BOT</a>'
+            f'<a href="{bot_url}">{tg_custom_emoji(PREMIUM_BOT_EMOJI_ID, "🤖")} BOT</a>'
         )
 
 
@@ -5675,4 +5677,4 @@ def main():
 
 if __name__ == "__main__":
 
-    main()
+    main() 
