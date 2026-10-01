@@ -19,6 +19,7 @@ from telegram.ext import (
     CommandHandler,
     CallbackQueryHandler,
     MessageHandler,
+    TypeHandler,
     ContextTypes,
     filters,
 )
@@ -5620,11 +5621,16 @@ def main():
         group=-10,
     )
 
+    # IMPORTANT: use TypeHandler for channel_post updates.
+    # This is more reliable than MessageHandler(UpdateType.CHANNEL_POST)
+    # across python-telegram-bot versions and guarantees that the
+    # channel_post field is routed to our detector.
     app.add_handler(
-        MessageHandler(
-            filters.UpdateType.CHANNEL_POST,
+        TypeHandler(
+            Update,
             channel_post_handler,
-        )
+        ),
+        group=0,
     )
 
     app.add_handler(
@@ -5649,9 +5655,26 @@ def main():
         "⏳ Polling Telegram..."
     )
 
+    print(
+        "📨 Channel-post detector: TypeHandler ENABLED"
+    )
+
+    print(
+        "📨 Telegram allowed_updates: channel_post ENABLED"
+    )
+
     app.run_polling(
         drop_pending_updates=False,
-        allowed_updates=Update.ALL_TYPES,
+        allowed_updates=[
+            "message",
+            "edited_message",
+            "channel_post",
+            "edited_channel_post",
+            "callback_query",
+            "my_chat_member",
+            "chat_member",
+            "chat_join_request",
+        ],
     )
 
 
