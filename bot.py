@@ -930,24 +930,19 @@ def update_request_status( channel, status ):
 
 
 async def channel_message( update: Update, context: ContextTypes.DEFAULT_TYPE ):
-    # Telegram uses update.message for a fresh message and
-    # update.edited_message when the user edits it. Always use the
-    # effective message so Track My Channel works in both cases.
+    # Use whichever private message Telegram supplied.
+    # Fresh messages -> update.message
+    # Edited messages -> update.edited_message
     message = update.message or update.edited_message
 
-    if message and message.text:
-        message.text = message.text.strip()
-        print(f"📡 TRACK CHANNEL INPUT RECEIVED: {message.text}")
-
-    if not message:
+    if not message or not message.text:
         return
 
-    if not message.text:
-        return
+    message.text = message.text.strip()
+    print(f"📡 TRACK CHANNEL INPUT RECEIVED: {message.text}")
 
     message_text = message.text.strip()
-
-    # -----------------------------------------------------
+# -----------------------------------------------------
     # SEARCH KOL
     # -----------------------------------------------------
 
@@ -5641,39 +5636,44 @@ def main():
         )
     )
 
-    async def _private_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        # First, consume a custom-emoji message only when it is actually
-        # a Premium Emoji ID lookup request from the configured Premium account.
+    async def _private_update_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        # Handle BOTH normal and edited private text updates.
+        # Using TypeHandler here avoids any filter/handler-order issue
+        # with Track My Channel usernames.
+        message = update.message or update.edited_message
+
+        if not message:
+            return
+
+        if message.chat.type != "private":
+            return
+
+        if not message.text:
+            return
+
+        if message.text.startswith("/"):
+            return
+
+        print(
+            f"📨 PRIVATE TEXT RECEIVED: {message.text} | "
+            f"waiting_for_channel={context.user_data.get('waiting_for_channel')} | "
+            f"channel_admin_check={context.user_data.get('channel_admin_check')}"
+        )
+
+        # Premium custom-emoji ID lookup.
         handled = await premium_emoji_id_handler(update, context)
         if handled:
             return
 
-        # Otherwise pass the exact same private text to the normal KOLPulse
-        # flow, including Track My Channel / Search KOL.
+        # Track My Channel / Search KOL.
         await channel_message(update, context)
-
-    app.add_handler(
-        MessageHandler(
-            filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND,
-            _private_text_router,
-        ),
-        group=0,
-    )
-
-    # Telegram sends an EDITED_MESSAGE update when the user edits an
-    # already-sent channel username. The screenshot shows the username
-    # messages as edited, so handle edited private text as well.
-    async def _edited_private_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if update.edited_message and update.edited_message.text:
-            print(f"✏️ EDITED PRIVATE MESSAGE RECEIVED: {update.edited_message.text}")
-            await channel_message(update, context)
 
     app.add_handler(
         TypeHandler(
             Update,
-            _edited_private_text_router,
+            _private_update_router,
         ),
-        group=1,
+        group=-10,
     )
 
     print(
@@ -5717,4 +5717,4 @@ def main():
 
 if __name__ == "__main__":
 
-    main() 
+    main()
