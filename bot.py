@@ -152,6 +152,19 @@ def ensure_video_request_tables():
         )
     """)
 
+    # One global promotional video is reused for every future call.
+    # The Telegram file_id is enough; the video itself does not need
+    # to be uploaded to GitHub.
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS saved_promotional_video (
+            id INTEGER PRIMARY KEY CHECK (id = 1),
+            file_id TEXT NOT NULL,
+            video_type TEXT NOT NULL DEFAULT 'video',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+
     conn.commit()
     conn.close()
 
@@ -196,6 +209,120 @@ def get_video_request_owner():
     conn.close()
 
     return row[0] if row else None
+
+
+def bootstrap_saved_promotional_video_from_calls():
+
+    # If an earlier version already saved a promotional video
+    # against a call, promote the newest one to the global
+    # reusable video automatically. This prevents the bot from
+    # asking for the same video again after this update.
+
+    if get_saved_promotional_video():
+        return
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT video_file_id
+        FROM calls
+        WHERE video_file_id IS NOT NULL
+          AND TRIM(video_file_id) <> ''
+        ORDER BY id DESC
+        LIMIT 1
+    """)
+
+    row = cursor.fetchone()
+    conn.close()
+
+    if row and row[0]:
+        save_promotional_video(
+            row[0],
+            "video"
+        )
+        print(
+            "♻️ Existing call video promoted to the global "
+            "reusable promotional video."
+        )
+
+
+def get_saved_promotional_video():
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT file_id, video_type
+        FROM saved_promotional_video
+        WHERE id = 1
+        LIMIT 1
+    """)
+
+    row = cursor.fetchone()
+    conn.close()
+
+    return row if row else None
+
+
+def save_promotional_video(file_id, video_type="video"):
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT OR REPLACE INTO saved_promotional_video
+        (id, file_id, video_type, created_at, updated_at)
+        VALUES (
+            1, ?, ?,
+            COALESCE(
+                (SELECT created_at FROM saved_promotional_video WHERE id = 1),
+                ?
+            ),
+            ?
+        )
+    """, (file_id, video_type, now, now))
+
+    conn.commit()
+    conn.close()
+
+
+def has_pending_video_request(user_id):
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT 1
+        FROM pending_video_requests
+        WHERE user_id = ? AND status = 'pending'
+        LIMIT 1
+    """, (user_id,))
+
+    row = cursor.fetchone()
+    conn.close()
+
+    return bool(row)
+
+
+def get_all_pending_video_requests(user_id):
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT id, call_id, user_id, caption
+        FROM pending_video_requests
+        WHERE user_id = ? AND status = 'pending'
+        ORDER BY id ASC
+    """, (user_id,))
+
+    rows = cursor.fetchall()
+    conn.close()
+
+    return rows
 
 
 def save_pending_video_request(call_id, user_id, caption):
@@ -2766,73 +2893,97 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
         )
 
         # =================================================
-        # PRIVATE VIDEO REQUEST
+        # REUSE ONE PROMOTIONAL VIDEO
         # =================================================
-        # Do not publish the call until the registered owner
-        # supplies the promotional video in private chat.
+        # The first call requests a promotional video once.
+        # After the owner sends it, the Telegram file_id is saved
+        # and the same video is reused automatically for every
+        # future call.
 
-        video_owner = get_video_request_owner()
+        saved_video = get_saved_promotional_video()
 
-        if not video_owner:
+        if saved_video:
+
+            saved_file_id, saved_video_type = saved_video
+
+            if saved_video_type == "animation":
+
+                await context.bot.send_animation(
+                    chat_id=LIVE_CHANNEL,
+                    animation=saved_file_id,
+                    caption=alert_text,
+                    parse_mode="HTML",
+                )
+
+            else:
+
+                await context.bot.send_video(
+                    chat_id=LIVE_CHANNEL,
+                    video=saved_file_id,
+                    caption=alert_text,
+                    parse_mode="HTML",
+                )
+
+            save_call_video(call_id, saved_file_id)
 
             print(
-                "⚠️ No video request owner registered. "
-                "Call is saved but not published."
+                f"✅ Saved promotional video reused for call #{call_id}"
             )
 
-            if GROUP_CHAT_ID:
+        else:
 
-                try:
-                    await context.bot.send_message(
-                        chat_id=int(GROUP_CHAT_ID),
-                        text=(
-                            "⚠️ VIDEO REQUIRED\n\n"
-                            f"Call #{call_id} from {channel} is waiting for a promotional video.\n\n"
-                            "The bot owner must open the bot privately and send /start first."
-                        ),
-                        disable_web_page_preview=True,
-                    )
-                except Exception as notify_error:
-                    print(
-                        "⚠️ Could not notify admin group: "
-                        f"{type(notify_error).__name__}: {notify_error}"
-                    )
+            video_owner = get_video_request_owner()
 
-            return
+            if not video_owner:
 
-        save_pending_video_request(
-            call_id=call_id,
-            user_id=video_owner,
-            caption=alert_text,
-        )
+                print(
+                    "⚠️ No video request owner registered. "
+                    "Call is saved but not published. "
+                    "Owner must open the bot privately and send /start once."
+                )
 
-        await context.bot.send_message(
-            chat_id=video_owner,
-            text=(
-                "🎥 <b>VIDEO REQUIRED FOR NEW CALL</b>\n\n"
-                f"📞 Call ID: <code>{call_id}</code>\n"
-                f"👤 KOL: {safe_channel}\n"
-                f"🔮 Token: {safe_token}\n"
-                f"💰 Call MC: {mc_display}\n\n"
-                "Send the promotional video now.\n"
-                "The video will be attached to this call and published automatically."
-            ),
-            parse_mode="HTML",
-            reply_markup=InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton(
-                        "🎥 Send Video",
-                        callback_data=f"video_for_call:{call_id}"
-                    )
-                ]
-            ]),
-            disable_web_page_preview=True,
-        )
+                return
 
-        print(
-            f"🎥 Video requested privately from {video_owner} "
-            f"for call #{call_id}"
-        )
+            # Queue this call. Only ONE request is sent while the
+            # promotional video is still missing.
+            save_pending_video_request(
+                call_id=call_id,
+                user_id=video_owner,
+                caption=alert_text,
+            )
+
+            if not has_pending_video_request(video_owner):
+                # Defensive fallback; normally the just-saved request
+                # makes this true.
+                return
+
+            # Send the request only if this is the first pending call.
+            pending_count = len(get_all_pending_video_requests(video_owner))
+
+            if pending_count == 1:
+
+                await context.bot.send_message(
+                    chat_id=video_owner,
+                    text=(
+                        "🎥 <b>PROMOTIONAL VIDEO REQUIRED</b>\n\n"
+                        "Send your promotional video once.\n\n"
+                        "After you send it, KOLPulse will save it and "
+                        "automatically use the same video for every new call.\n\n"
+                        f"📞 First waiting Call ID: <code>{call_id}</code>\n"
+                        "♻️ You will NOT be asked for the video again."
+                    ),
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                )
+
+                print(
+                    f"🎥 One-time promotional video requested from {video_owner}"
+                )
+            else:
+
+                print(
+                    f"⏳ Call #{call_id} queued; video request already sent to {video_owner}"
+                )
 
     except Exception as error:
 
@@ -3599,52 +3750,70 @@ async def promotional_video_handler( update: Update, context: ContextTypes.DEFAU
         return
 
     user_id = update.effective_user.id
-    requested_call_id = context.user_data.get(
-        "pending_video_call_id"
-    )
 
-    pending = get_pending_video_request(
-        user_id,
-        requested_call_id
-    )
-
-    if not pending:
-        pending = get_pending_video_request(user_id)
-
-    if not pending:
-        await message.reply_text(
-            "⚠️ No pending call is waiting for a video right now."
-        )
+    # Only the registered video owner can set the global video.
+    if get_video_request_owner() != user_id:
         return
-
-    _, call_id, _, caption = pending
 
     if message.video:
         video_file_id = message.video.file_id
+        video_type = "video"
     elif message.animation:
         video_file_id = message.animation.file_id
+        video_type = "animation"
     else:
         await message.reply_text(
             "❌ Please send the promotional video as a Telegram video."
         )
         return
 
+    pending_requests = get_all_pending_video_requests(user_id)
+
     try:
-        await context.bot.send_video(
-            chat_id=LIVE_CHANNEL,
-            video=video_file_id,
-            caption=caption,
-            parse_mode="HTML",
+        # Save it globally first. From this point onward every new
+        # detected call will reuse this exact Telegram file_id.
+        save_promotional_video(
+            video_file_id,
+            video_type
         )
 
-        save_call_video(
-            call_id,
-            video_file_id
-        )
+        if not pending_requests:
+            await message.reply_text(
+                "✅ Promotional video saved!\n\n"
+                "This same video will now be used automatically for every new call.\n"
+                "You will not be asked for it again."
+            )
+            return
 
-        complete_pending_video_request(
-            call_id
-        )
+        published = 0
+
+        for _, call_id, _, caption in pending_requests:
+
+            if video_type == "animation":
+                await context.bot.send_animation(
+                    chat_id=LIVE_CHANNEL,
+                    animation=video_file_id,
+                    caption=caption,
+                    parse_mode="HTML",
+                )
+            else:
+                await context.bot.send_video(
+                    chat_id=LIVE_CHANNEL,
+                    video=video_file_id,
+                    caption=caption,
+                    parse_mode="HTML",
+                )
+
+            save_call_video(
+                call_id,
+                video_file_id
+            )
+
+            complete_pending_video_request(
+                call_id
+            )
+
+            published += 1
 
         context.user_data.pop(
             "pending_video_call_id",
@@ -3652,407 +3821,26 @@ async def promotional_video_handler( update: Update, context: ContextTypes.DEFAU
         )
 
         await message.reply_text(
-            "✅ Video received and call published successfully!\n\n"
-            f"📞 Call ID: {call_id}\n"
-            "📡 Published to KOLPulse Live."
+            "✅ Promotional video saved permanently for KOLPulse.\n\n"
+            f"📡 Published {published} waiting call(s).\n"
+            "♻️ From now on, every new call will automatically use this same video."
         )
 
         print(
-            f"✅ Promotional video received and published for call #{call_id}"
+            f"✅ Global promotional video saved and {published} pending call(s) published."
         )
 
     except Exception as error:
 
         print(
-            "❌ Could not publish promotional video: "
+            "❌ Could not save/publish promotional video: "
             f"{type(error).__name__}: {error}"
         )
 
         await message.reply_text(
-            "❌ Video could not be published.\n\n"
+            "❌ Video could not be saved/published.\n\n"
             "Please send the video again."
         )
-
-
-# =========================================================
-# TEXT MESSAGE HANDLER
-# =========================================================
-
-async def channel_message( update: Update, context: ContextTypes.DEFAULT_TYPE ):
-
-    if not update.message:
-
-        return
-
-    if not update.message.text:
-
-        return
-
-    message_text = (
-        update.message.text.strip()
-    )
-
-    # -----------------------------------------------------
-    # SEARCH KOL
-    # -----------------------------------------------------
-
-    if context.user_data.get(
-        "waiting_for_kol_search"
-    ):
-
-        channel = normalize_channel(
-            message_text
-        )
-
-        context.user_data[
-            "waiting_for_kol_search"
-        ] = False
-
-        await show_kol_results(
-            update,
-            channel
-        )
-
-        return
-
-    # -----------------------------------------------------
-    # TRACK CHANNEL
-    # -----------------------------------------------------
-
-    if not context.user_data.get(
-        "waiting_for_channel"
-    ):
-
-        return
-
-    channel = normalize_channel(
-        message_text
-    )
-
-    context.user_data[
-        "waiting_for_channel"
-    ] = False
-
-    # -----------------------------------------------------
-    # VERIFY ADMIN
-    # -----------------------------------------------------
-
-    print(
-        f"🔐 Checking bot Admin access "
-        f"in {channel}..."
-    )
-
-    (
-        bot_is_admin,
-        telegram_chat,
-        bot_status
-    ) = await verify_bot_is_channel_admin(
-        context,
-        channel
-    )
-
-    if not bot_is_admin:
-
-        context.user_data[
-            "waiting_for_channel"
-        ] = True
-
-        await update.message.reply_text(
-
-            "❌ Bot Is Not Admin Yet\n\n"
-
-            f"📡 Channel: {channel}\n\n"
-
-            "Please add:\n"
-
-            f"🤖 {BOT_USERNAME}\n\n"
-
-            "as an Admin in your Telegram channel.\n\n"
-
-            "After adding the bot as Admin, "
-            "send your channel username again.\n\n"
-
-            "⚠️ Your request has NOT been submitted.",
-
-            reply_markup=InlineKeyboardMarkup([
-                [
-                    InlineKeyboardButton(
-                        "🤖 I Added Bot as Admin",
-                        callback_data=(
-                            "check_bot_admin"
-                        )
-                    )
-                ],
-
-                [
-                    InlineKeyboardButton(
-                        "⬅️ Back",
-                        callback_data=(
-                            "back_menu"
-                        )
-                    )
-                ]
-            ]),
-        )
-
-        return
-
-    print(
-        f"✅ KOLPulse bot is Admin in "
-        f"{channel}"
-    )
-
-    # -----------------------------------------------------
-    # REQUEST STATUS
-    # -----------------------------------------------------
-
-    try:
-
-        status = get_request_status(
-            channel
-        )
-
-    except Exception as error:
-
-        print(
-            "❌ Channel status check failed: "
-            f"{type(error).__name__}: {error}"
-        )
-
-        await update.message.reply_text(
-
-            "⚠️ Could not check your "
-            "channel status.\n\n"
-            "Please try again.",
-
-            reply_markup=main_menu(),
-        )
-
-        return
-
-    # -----------------------------------------------------
-    # APPROVED
-    # -----------------------------------------------------
-
-    if status == "approved":
-
-        await update.message.reply_text(
-
-            "✅ Channel Already Approved!\n\n"
-
-            f"📡 Channel: {channel}\n\n"
-
-            "Your channel is already verified "
-            "on KOLPulse.\n\n"
-
-            "🔎 New calls can already be tracked.",
-
-            reply_markup=main_menu(),
-        )
-
-        return
-
-    # -----------------------------------------------------
-    # PENDING
-    # -----------------------------------------------------
-
-    if status == "pending":
-
-        await update.message.reply_text(
-
-            "⏳ Channel Already Pending!\n\n"
-
-            f"📡 Channel: {channel}\n\n"
-
-            "Your tracking request is already "
-            "waiting for admin approval.\n\n"
-
-            "Please wait for the admin decision.",
-
-            reply_markup=main_menu(),
-        )
-
-        return
-
-    user = update.effective_user
-
-    if user.username:
-
-        user_display = (
-            f"@{user.username}"
-        )
-
-    else:
-
-        user_display = (
-            user.full_name
-        )
-
-    user_id = user.id
-
-    # -----------------------------------------------------
-    # SAVE PENDING
-    # -----------------------------------------------------
-
-    try:
-
-        created = save_pending_request(
-            channel,
-            user_id
-        )
-
-        if not created:
-
-            await update.message.reply_text(
-
-                "⏳ Channel Already Pending!\n\n"
-
-                f"📡 Channel: {channel}\n\n"
-
-                "Your tracking request is already "
-                "waiting for admin approval.",
-
-                reply_markup=main_menu(),
-            )
-
-            return
-
-    except Exception as error:
-
-        print(
-            "❌ Could not save pending request: "
-            f"{type(error).__name__}: {error}"
-        )
-
-        await update.message.reply_text(
-
-            "⚠️ Could not create your "
-            "tracking request.\n\n"
-
-            "Please try again.",
-
-            reply_markup=main_menu(),
-        )
-
-        return
-
-    current_time = datetime.now().strftime(
-        "%Y-%m-%d %H:%M:%S"
-    )
-
-    # -----------------------------------------------------
-    # ADMIN GROUP NOTIFICATION
-    # -----------------------------------------------------
-
-    notification = (
-
-        "📡 NEW CHANNEL TRACKING REQUEST\n\n"
-
-        f"👤 User: {user_display}\n"
-
-        f"🆔 Telegram ID: {user_id}\n\n"
-
-        f"📺 Channel: {channel}\n"
-
-        f"🔗 Link: "
-        f"https://t.me/"
-        f"{channel.lstrip('@')}\n\n"
-
-        "🤖 Bot Admin: ✅ Verified\n"
-
-        f"⏰ Time: {current_time}\n\n"
-
-        "👇 Admin action required:"
-    )
-
-    group_sent = False
-
-    if GROUP_CHAT_ID:
-
-        try:
-
-            group_chat_id = int(
-                GROUP_CHAT_ID
-            )
-
-            await context.bot.send_message(
-
-                chat_id=group_chat_id,
-
-                text=notification,
-
-                reply_markup=request_buttons(
-                    user_id,
-                    channel
-                ),
-
-                disable_web_page_preview=True,
-            )
-
-            group_sent = True
-
-            print(
-                "✅ Group notification "
-                "sent successfully."
-            )
-
-        except Exception as error:
-
-            print(
-                "❌ GROUP NOTIFICATION ERROR: "
-                f"{type(error).__name__}: {error}"
-            )
-
-    else:
-
-        print(
-            "❌ GROUP_CHAT_ID secret is empty."
-        )
-
-    # -----------------------------------------------------
-    # CONFIRMATION
-    # -----------------------------------------------------
-
-    if group_sent:
-
-        confirmation = (
-
-            "📡 Channel Submitted Successfully!\n\n"
-
-            f"📺 Channel: {channel}\n"
-
-            "🤖 Bot Admin: ✅ Verified\n\n"
-
-            "⏳ Status: Pending Admin Approval\n\n"
-
-            "Your tracking request has been "
-            "sent to KOLPulse.\n\n"
-
-            "Please wait for the admin decision."
-        )
-
-    else:
-
-        confirmation = (
-
-            "⚠️ Channel received!\n\n"
-
-            f"📡 Channel: {channel}\n"
-
-            "🤖 Bot Admin: ✅ Verified\n\n"
-
-            "Your request was saved, but the "
-            "admin notification could not be sent.\n\n"
-
-            "Please contact support."
-        )
-
-    await update.message.reply_text(
-
-        confirmation,
-
-        reply_markup=main_menu(),
-    )
 
 
 # =========================================================
@@ -4078,6 +3866,8 @@ def main():
     ensure_tracking_requests_table()
 
     ensure_video_request_tables()
+
+    bootstrap_saved_promotional_video_from_calls()
 
     ensure_call_tracking_columns()
 
