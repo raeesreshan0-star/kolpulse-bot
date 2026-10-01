@@ -4427,9 +4427,16 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
             channel
         )
 
+        # The first line is PROJECT-first: the project nickname is clickable
+        # and opens the bot project profile. The KOL/channel name is shown
+        # on the next line where the original call can be opened.
+        safe_project_name = html.escape(
+            str(project_name or token_symbol or "$TOKEN")
+        )
+
         alert_text = (
             f'{chain_emoji} <b>CALL ALERT:</b> '
-            f'<a href="{kol_url}">{safe_kol}</a> '
+            f'<a href="{project_url}"><b>{safe_project_name}</b></a> '
             f'{tg_custom_emoji(PREMIUM_KOL_EMOJI_ID, "🎤")}\n\n'
 
             f'<a href="{call_url}">{safe_call_channel}</a> '
@@ -4441,10 +4448,10 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
             f'CA: <code>{safe_contract}</code>\n\n'
 
             f'<a href="{call_url}">'
-            f'{tg_custom_emoji(PREMIUM_CALL_EMOJI_ID, "🔎")} CALL</a> '
+            f'{tg_custom_emoji(PREMIUM_CALL_EMOJI_ID, "🔎")} View Call</a> '
 
             f'<a href="{kol_url}">'
-            f'{tg_custom_emoji(PREMIUM_KOL_EMOJI_ID, "🎤")} KOL</a> '
+            f'{tg_custom_emoji(PREMIUM_KOL_EMOJI_ID, "🎤")} KOL Stats</a> '
 
             f'<a href="{bot_url}">🤖 BOT</a>'
         )
