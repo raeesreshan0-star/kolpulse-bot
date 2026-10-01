@@ -950,6 +950,233 @@ def request_buttons( user_id, channel ):
 
 
 # =========================================================
+# KOL PROFILE / PERFORMANCE
+# =========================================================
+
+def get_kol_profile_rows(channel):
+
+    channel = normalize_channel(channel)
+    clean = channel.lstrip("@").lower()
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+
+        cursor.execute(
+            """ SELECT id, kol_username, project_name, project_link, original_call_link, call_mc, current_mc, multiplier, call_time, status, created_at, contract, chain, ath_mc FROM calls WHERE LOWER(REPLACE(kol_username, '@', '')) = ? ORDER BY created_at DESC, id DESC """,
+            (clean,)
+        )
+
+        rows = cursor.fetchall()
+
+    except Exception as error:
+
+        print(
+            "❌ Could not load KOL profile: "
+            f"{type(error).__name__}: {error}"
+        )
+        rows = []
+
+    finally:
+        conn.close()
+
+    return rows
+
+
+def _safe_float(value):
+
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return 0.0
+
+
+def _format_x(value):
+
+    if value is None:
+        return "N/A"
+
+    try:
+        return f"{float(value):.2f}X"
+    except (TypeError, ValueError):
+        return "N/A"
+
+
+async def show_kol_profile(update, channel):
+
+    channel = normalize_channel(channel)
+    rows = get_kol_profile_rows(channel)
+
+    if not rows:
+
+        await update.message.reply_text(
+            "📊 <b>KOL PROFILE</b>\n\n"
+            f"👤 KOL: {html.escape(channel)}\n\n"
+            "No tracked projects/calls found for this KOL yet.",
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+            reply_markup=main_menu(),
+        )
+        return
+
+    unique_project_keys = set()
+    for row in rows:
+        project_key = (
+            str(row[11]).strip().lower()
+            if row[11]
+            else str(row[2] or "unknown").strip().lower()
+        )
+        unique_project_keys.add(project_key)
+
+    total_projects = len(unique_project_keys)
+    total_calls = len(rows)
+    two_x = 0
+    best_ath_x = 0.0
+    total_ath_profit_pct = 0.0
+    ath_count = 0
+
+    for row in rows:
+
+        call_mc = _safe_float(row[5])
+        ath_mc = _safe_float(row[13])
+        current_mc = _safe_float(row[6])
+        multiplier = row[7]
+
+        ath_x = (ath_mc / call_mc) if call_mc > 0 and ath_mc > 0 else 0.0
+
+        if ath_x >= 2:
+            two_x += 1
+
+        best_ath_x = max(best_ath_x, ath_x)
+
+        if ath_x > 0:
+            total_ath_profit_pct += (ath_x - 1) * 100
+            ath_count += 1
+
+    avg_ath_x = (
+        sum(
+            (_safe_float(row[13]) / _safe_float(row[5]))
+            for row in rows
+            if _safe_float(row[5]) > 0 and _safe_float(row[13]) > 0
+        ) / ath_count
+        if ath_count
+        else 0.0
+    )
+
+    profile_link = (
+        f"https://t.me/{channel.lstrip('@')}"
+    )
+
+    summary = (
+        "📊 <b>KOL PERFORMANCE PROFILE</b>\n\n"
+        f'👤 KOL: <a href="{profile_link}">{html.escape(channel)}</a>\n'
+        f"📁 Unique Projects: <b>{total_projects}</b>\n"
+        f"📞 Total Calls: <b>{total_calls}</b>\n"
+        f"🚀 2X+ ATH Hits: <b>{two_x}</b>\n"
+        f"🔥 Best ATH: <b>{best_ath_x:.2f}X</b>\n"
+        f"📈 Average ATH: <b>{avg_ath_x:.2f}X</b>\n"
+        f"💹 Average ATH ROI: <b>{((avg_ath_x - 1) * 100):.1f}%</b>\n\n"
+        "<b>📋 PROJECT PERFORMANCE</b>\n"
+    )
+
+    await update.message.reply_text(
+        summary,
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )
+
+    # Send the complete project history in safe-sized chunks.
+    chunk = ""
+    sent = 0
+
+    for index, row in enumerate(rows, 1):
+
+        (
+            call_id,
+            kol_username,
+            project_name,
+            project_link,
+            original_call_link,
+            call_mc,
+            current_mc,
+            multiplier,
+            call_time,
+            status,
+            created_at,
+            contract,
+            chain,
+            ath_mc,
+        ) = row
+
+        call_mc_f = _safe_float(call_mc)
+        current_mc_f = _safe_float(current_mc)
+        ath_mc_f = _safe_float(ath_mc)
+
+        current_x = (
+            current_mc_f / call_mc_f
+            if call_mc_f > 0 and current_mc_f > 0
+            else (float(multiplier) if multiplier is not None else 0.0)
+        )
+
+        ath_x = (
+            ath_mc_f / call_mc_f
+            if call_mc_f > 0 and ath_mc_f > 0
+            else 0.0
+        )
+
+        ath_roi = ((ath_x - 1) * 100) if ath_x > 0 else 0.0
+        current_roi = ((current_x - 1) * 100) if current_x > 0 else 0.0
+
+        safe_project = html.escape(str(project_name or "Unknown Project"))
+        safe_chain = html.escape(str(chain or "N/A"))
+        safe_status = html.escape(str(status or "tracking"))
+
+        block = (
+            f"\n<b>#{index} {safe_project}</b>\n"
+            f"💰 Call MC: <b>{format_market_cap(call_mc_f)}</b>\n"
+            f"🏆 ATH MC: <b>{format_market_cap(ath_mc_f)}</b>\n"
+            f"🔥 ATH: <b>{ath_x:.2f}X</b> (+{ath_roi:.1f}%)\n"
+            f"📈 Current: <b>{current_x:.2f}X</b> (+{current_roi:.1f}%)\n"
+            f"⛓️ Chain: <b>{safe_chain}</b>\n"
+            f"📌 Status: <b>{safe_status}</b>\n"
+            f"🕒 {html.escape(str(call_time or created_at or 'N/A'))}\n"
+        )
+
+        if contract:
+            block += f"🔗 CA: <code>{html.escape(str(contract))}</code>\n"
+
+        if original_call_link:
+            block += f'📞 <a href="{html.escape(str(original_call_link), quote=True)}">CALL</a>\n'
+
+        if len(chunk) + len(block) > 3600:
+            await update.message.reply_text(
+                chunk,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+            sent += 1
+            chunk = ""
+
+        chunk += block
+
+    if chunk:
+        await update.message.reply_text(
+            chunk,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
+
+    await update.message.reply_text(
+        "♻️ <b>Full KOL history loaded.</b>\n"
+        "Tap the KOL name again anytime to refresh the stats.",
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+        reply_markup=main_menu(),
+    )
+
+
+# =========================================================
 # START
 # =========================================================
 
@@ -1000,6 +1227,26 @@ async def start( update: Update, context: ContextTypes.DEFAULT_TYPE ):
     context.user_data[
         "channel_admin_check"
     ] = False
+
+    # Telegram deep-link: /start kol_<username>
+    # The KOL label in Live posts points here so users can open
+    # the complete performance profile for that channel.
+    if context.args:
+
+        deep_link = str(context.args[0]).strip()
+
+        if deep_link.lower().startswith("kol_"):
+
+            kol_username = normalize_channel(
+                deep_link[4:]
+            )
+
+            await show_kol_profile(
+                update,
+                kol_username
+            )
+
+            return
 
     await update.message.reply_text(
 
@@ -3159,7 +3406,7 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
             f'🔮 <a href="{original_call_link}">'
             f'CALL</a> '
 
-            f'🔮 <a href="{kol_link}">'
+            f'🔮 <a href="{BOT_LINK}?start=kol_{html.escape(channel.lstrip("@"), quote=True)}">'
             f'KOL</a> '
 
             f'🔮 <a href="{BOT_LINK}">'
@@ -4273,4 +4520,4 @@ def main():
 
 if __name__ == "__main__":
 
-    main() 
+    main()
