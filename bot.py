@@ -1003,81 +1003,104 @@ def _format_x(value):
         return "N/A"
 
 
-async def show_kol_profile(update, channel):
+def _project_deep_link(project_name, contract=None):
 
-    channel = normalize_channel(channel)
-    rows = get_kol_profile_rows(channel)
+    key = str(contract or "").strip()
+
+    if not key:
+        key = re.sub(
+            r"[^A-Za-z0-9_-]+",
+            "_",
+            str(project_name or "project")
+        ).strip("_")[:45]
+
+    if not key:
+        key = "unknown"
+
+    return f"{BOT_LINK}?start=project_{key}"
+
+
+def get_project_rows(project_key):
+
+    key = str(project_key or "").strip()
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    try:
+        cursor.execute(
+            """ SELECT id, kol_username, kol_link, project_name, project_link, original_call_link, call_mc, current_mc, multiplier, call_time, status, created_at, contract, chain, ath_mc FROM calls WHERE ( (contract IS NOT NULL AND contract != '' AND contract = ?) OR ((contract IS NULL OR contract = '') AND LOWER(TRIM(project_name)) = LOWER(TRIM(?))) ) ORDER BY created_at ASC, id ASC """,
+            (key, key),
+        )
+        rows = cursor.fetchall()
+    except Exception as error:
+        print(
+            "❌ Could not load project rows: "
+            f"{type(error).__name__}: {error}"
+        )
+        rows = []
+    finally:
+        conn.close()
+
+    return rows
+
+
+async def show_project_profile(update, project_key):
+
+    rows = get_project_rows(project_key)
 
     if not rows:
-
         await update.message.reply_text(
-            "📊 <b>KOL PROFILE</b>\n\n"
-            f"👤 KOL: {html.escape(channel)}\n\n"
-            "No tracked projects/calls found for this KOL yet.",
-            parse_mode="HTML",
-            disable_web_page_preview=True,
+            "❌ Project data not found.\n\n"
+            "This project may not have any tracked calls yet.",
             reply_markup=main_menu(),
         )
         return
 
-    unique_project_keys = set()
-    for row in rows:
-        project_key = (
-            str(row[11]).strip().lower()
-            if row[11]
-            else str(row[2] or "unknown").strip().lower()
-        )
-        unique_project_keys.add(project_key)
+    first = rows[0]
+    project_name = first[3] or "$TOKEN"
+    contract = first[12] or project_key
+    ath_mc = max(
+        (_safe_float(row[14]) for row in rows),
+        default=0.0,
+    )
 
-    total_projects = len(unique_project_keys)
     total_calls = len(rows)
-    two_x = 0
-    best_ath_x = 0.0
-    total_ath_profit_pct = 0.0
-    ath_count = 0
+    best_row = None
+    best_x = 0.0
+    best_roi = 0.0
 
     for row in rows:
+        call_mc = _safe_float(row[6])
+        ath = _safe_float(row[14])
+        current = _safe_float(row[7])
+        x = (ath / call_mc) if call_mc > 0 and ath > 0 else (
+            current / call_mc if call_mc > 0 and current > 0 else 0.0
+        )
+        roi = (x - 1) * 100 if x > 0 else 0.0
+        if x > best_x:
+            best_x = x
+            best_roi = roi
+            best_row = row
 
-        call_mc = _safe_float(row[5])
-        ath_mc = _safe_float(row[13])
-        current_mc = _safe_float(row[6])
-        multiplier = row[7]
+    earliest = rows[0]
+    earliest_x = _safe_float(earliest[8]) if earliest[8] is not None else 0.0
+    if _safe_float(earliest[6]) > 0 and _safe_float(earliest[14]) > 0:
+        earliest_x = _safe_float(earliest[14]) / _safe_float(earliest[6])
 
-        ath_x = (ath_mc / call_mc) if call_mc > 0 and ath_mc > 0 else 0.0
-
-        if ath_x >= 2:
-            two_x += 1
-
-        best_ath_x = max(best_ath_x, ath_x)
-
-        if ath_x > 0:
-            total_ath_profit_pct += (ath_x - 1) * 100
-            ath_count += 1
-
-    avg_ath_x = (
-        sum(
-            (_safe_float(row[13]) / _safe_float(row[5]))
-            for row in rows
-            if _safe_float(row[5]) > 0 and _safe_float(row[13]) > 0
-        ) / ath_count
-        if ath_count
-        else 0.0
-    )
-
-    profile_link = (
-        f"https://t.me/{channel.lstrip('@')}"
-    )
+    safe_project = html.escape(str(project_name))
+    safe_contract = html.escape(str(contract or "N/A"))
 
     summary = (
-        "📊 <b>KOL PERFORMANCE PROFILE</b>\n\n"
-        f'👤 KOL: <a href="{profile_link}">{html.escape(channel)}</a>\n'
-        f"📁 Unique Projects: <b>{total_projects}</b>\n"
-        f"📞 Total Calls: <b>{total_calls}</b>\n"
-        f"🚀 2X+ ATH Hits: <b>{two_x}</b>\n"
-        f"🔥 Best ATH: <b>{best_ath_x:.2f}X</b>\n"
-        f"📈 Average ATH: <b>{avg_ath_x:.2f}X</b>\n"
-        f"💹 Average ATH ROI: <b>{((avg_ath_x - 1) * 100):.1f}%</b>\n\n"
-        "<b>📋 PROJECT PERFORMANCE</b>\n"
+        f"💰 <b>{safe_project}</b>\n\n"
+        f"CA: <code>{safe_contract}</code>\n\n"
+        f"🚀 ATH: <b>{format_market_cap(ath_mc)}</b>\n\n"
+        f"👑 Earliest Call: {html.escape(str(earliest[1] or 'N/A'))} "
+        f"({earliest_x:.2f}x)\n"
+        f"👑 Highest Return: "
+        f"{html.escape(str(best_row[1] if best_row else 'N/A'))} "
+        f"({best_x:.2f}x)\n"
+        f"👑 Highest Impact: <b>{best_roi:.1f}%</b>\n\n"
+        f"<b>Total Calls Detected: {total_calls}</b>\n"
     )
 
     await update.message.reply_text(
@@ -1086,12 +1109,209 @@ async def show_kol_profile(update, channel):
         disable_web_page_preview=True,
     )
 
-    # Send the complete project history in safe-sized chunks.
-    chunk = ""
-    sent = 0
-
     for index, row in enumerate(rows, 1):
 
+        (
+            call_id,
+            kol_username,
+            kol_link,
+            row_project_name,
+            project_link,
+            original_call_link,
+            call_mc,
+            current_mc,
+            multiplier,
+            call_time,
+            status,
+            created_at,
+            row_contract,
+            chain,
+            row_ath_mc,
+        ) = row
+
+        call_mc_f = _safe_float(call_mc)
+        current_mc_f = _safe_float(current_mc)
+        ath_mc_f = _safe_float(row_ath_mc)
+
+        current_x = (
+            current_mc_f / call_mc_f
+            if call_mc_f > 0 and current_mc_f > 0
+            else (_safe_float(multiplier) if multiplier is not None else 0.0)
+        )
+
+        ath_x = (
+            ath_mc_f / call_mc_f
+            if call_mc_f > 0 and ath_mc_f > 0
+            else current_x
+        )
+
+        if ath_x <= 0:
+            ath_x = current_x
+
+        impact = max((ath_x - 1) * 100, 0.0) if ath_x > 0 else 0.0
+        profit = 100 * current_x if current_x > 0 else 100
+
+        safe_kol = html.escape(str(kol_username or "N/A"))
+        safe_time = html.escape(str(call_time or created_at or "N/A"))
+        safe_chain = html.escape(str(chain or "N/A"))
+
+        block = (
+            f"<b>{index}. {safe_kol}</b>\n\n"
+            f"Multiplier: <b>{current_x:.2f}x</b>\n"
+            f"Called MC: <b>{format_market_cap(call_mc_f)}</b>\n"
+            f"Price Impact: <b>{impact:.0f}%</b>\n"
+            f"Profit: <b>$100 = ${profit:.0f}</b>\n"
+            f"ATH: <b>{format_market_cap(ath_mc_f)}</b> / <b>{ath_x:.2f}x</b>\n"
+            f"Chain: <b>{safe_chain}</b>\n"
+            f"Time: {safe_time}\n"
+        )
+
+        buttons = []
+
+        if original_call_link:
+            buttons.append(
+                InlineKeyboardButton(
+                    "🔎 View Call",
+                    url=str(original_call_link),
+                )
+            )
+
+        if kol_username:
+            kol_url = (
+                f"{BOT_LINK}?start=kol_"
+                f"{html.escape(str(kol_username).lstrip('@'), quote=True)}"
+            )
+            buttons.append(
+                InlineKeyboardButton(
+                    "💍 KOL Stats",
+                    url=kol_url,
+                )
+            )
+
+        await update.message.reply_text(
+            block,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+            reply_markup=(
+                InlineKeyboardMarkup([buttons])
+                if buttons else None
+            ),
+        )
+
+    await update.message.reply_text(
+        "───────────────────────\n"
+        "📌 Tap <b>View Call</b> to open the original promoted post, "
+        "or <b>KOL Stats</b> to view the channel's complete tracked performance.",
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+        reply_markup=main_menu(),
+    )
+
+
+async def show_kol_profile(update, channel):
+
+    channel = normalize_channel(channel)
+    rows = get_kol_profile_rows(channel)
+
+    if not rows:
+        await update.message.reply_text(
+            "💍 <b>KOLscope STATS</b>\n\n"
+            f"Channel: {html.escape(channel)}\n\n"
+            "No tracked calls found for this KOL yet.",
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+            reply_markup=main_menu(),
+        )
+        return
+
+    total_calls = len(rows)
+    project_keys = set()
+    best_row = None
+    best_x = 0.0
+    ath_values = []
+    hit_2x = hit_10x = hit_100x = hit_1000x = 0
+
+    for row in rows:
+        project_key = (
+            str(row[11]).strip().lower()
+            if row[11]
+            else str(row[2] or "unknown").strip().lower()
+        )
+        project_keys.add(project_key)
+
+        call_mc = _safe_float(row[5])
+        ath_mc = _safe_float(row[13])
+        current_mc = _safe_float(row[6])
+        fallback_x = _safe_float(row[7])
+
+        ath_x = (
+            ath_mc / call_mc
+            if call_mc > 0 and ath_mc > 0
+            else (
+                current_mc / call_mc
+                if call_mc > 0 and current_mc > 0
+                else fallback_x
+            )
+        )
+
+        if ath_x > 0:
+            ath_values.append(ath_x)
+            if ath_x >= 2:
+                hit_2x += 1
+            if ath_x >= 10:
+                hit_10x += 1
+            if ath_x >= 100:
+                hit_100x += 1
+            if ath_x >= 1000:
+                hit_1000x += 1
+
+            if ath_x > best_x:
+                best_x = ath_x
+                best_row = row
+
+    avg_x = sum(ath_values) / len(ath_values) if ath_values else 0.0
+    avg_roi = (avg_x - 1) * 100 if avg_x > 0 else 0.0
+
+    # Rank is only shown when a real ranking is available from tracked data.
+    # No artificial score is invented here.
+    rank = "Unranked"
+    try:
+        leaderboard = get_kol_leaderboard()
+        for index, item in enumerate(leaderboard, 1):
+            if normalize_channel(item[0]) == channel:
+                rank = f"#{index}"
+                break
+    except Exception:
+        rank = "Unranked"
+
+    profile_link = f"https://t.me/{channel.lstrip('@')}"
+    safe_channel = html.escape(channel)
+    best_project = (
+        html.escape(str(best_row[2] or "$TOKEN"))
+        if best_row else "N/A"
+    )
+
+    summary = (
+        "💍 <b>KOLscope STATS</b>\n\n"
+        f'Channel: <a href="{profile_link}">{safe_channel}</a>\n'
+        f"Rank: {rank}\n\n"
+        "<b>KOL SCORE: Not calculated</b>\n"
+        "⚪⚪⚪⚪⚪⚪⚪⚪⚪⚪\n\n"
+        f"💵 Average X Per Call: <b>{avg_x:.2f}x</b>\n"
+        f"📈 Average ATH ROI Per Call: <b>{avg_roi:.1f}%</b>\n"
+        f"👑 Best Call: <b>{best_project} / {best_x:.2f}x</b>\n"
+        f"💎 Total Calls: <b>{total_calls}</b>\n"
+        f"📁 Total Projects: <b>{len(project_keys)}</b>\n\n"
+        "<b>Last 6 Calls:</b>"
+    )
+
+    await update.message.reply_text(
+        summary,
+        parse_mode="HTML",
+        disable_web_page_preview=True,
+    )
+
+    for row in rows[:6]:
         (
             call_id,
             kol_username,
@@ -1112,73 +1332,68 @@ async def show_kol_profile(update, channel):
         call_mc_f = _safe_float(call_mc)
         current_mc_f = _safe_float(current_mc)
         ath_mc_f = _safe_float(ath_mc)
-
         current_x = (
             current_mc_f / call_mc_f
             if call_mc_f > 0 and current_mc_f > 0
-            else (float(multiplier) if multiplier is not None else 0.0)
+            else (_safe_float(multiplier) if multiplier is not None else 0.0)
         )
-
         ath_x = (
             ath_mc_f / call_mc_f
             if call_mc_f > 0 and ath_mc_f > 0
-            else 0.0
+            else current_x
         )
+        impact = max((ath_x - 1) * 100, 0.0) if ath_x > 0 else 0.0
+        profit = 100 * current_x if current_x > 0 else 100
 
-        ath_roi = ((ath_x - 1) * 100) if ath_x > 0 else 0.0
-        current_roi = ((current_x - 1) * 100) if current_x > 0 else 0.0
-
-        safe_project = html.escape(str(project_name or "Unknown Project"))
+        safe_project = html.escape(str(project_name or "$TOKEN"))
+        safe_time = html.escape(str(call_time or created_at or "N/A"))
         safe_chain = html.escape(str(chain or "N/A"))
-        safe_status = html.escape(str(status or "tracking"))
 
         block = (
-            f"\n<b>#{index} {safe_project}</b>\n"
-            f"💰 Call MC: <b>{format_market_cap(call_mc_f)}</b>\n"
-            f"🏆 ATH MC: <b>{format_market_cap(ath_mc_f)}</b>\n"
-            f"🔥 ATH: <b>{ath_x:.2f}X</b> (+{ath_roi:.1f}%)\n"
-            f"📈 Current: <b>{current_x:.2f}X</b> (+{current_roi:.1f}%)\n"
-            f"⛓️ Chain: <b>{safe_chain}</b>\n"
-            f"📌 Status: <b>{safe_status}</b>\n"
-            f"🕒 {html.escape(str(call_time or created_at or 'N/A'))}\n"
+            f"💰 <b>{safe_project}</b>\n"
+            f" Multiplier: <b>{current_x:.2f}x</b>\n"
+            f" Price Impact: <b>{impact:.0f}%</b>\n"
+            f" Profit: <b>$100 = ${profit:.0f}</b>\n"
+            f" Call: <b>{format_market_cap(call_mc_f)} → {format_market_cap(ath_mc_f)}</b>\n"
+            f" Chain: <b>{safe_chain}</b>\n"
+            f" Time: {safe_time}\n"
         )
 
-        if contract:
-            block += f"🔗 CA: <code>{html.escape(str(contract))}</code>\n"
-
+        buttons = []
         if original_call_link:
-            block += f'📞 <a href="{html.escape(str(original_call_link), quote=True)}">CALL</a>\n'
-
-        if len(chunk) + len(block) > 3600:
-            await update.message.reply_text(
-                chunk,
-                parse_mode="HTML",
-                disable_web_page_preview=True,
+            buttons.append(
+                InlineKeyboardButton(
+                    "🔎 View Call",
+                    url=str(original_call_link),
+                )
             )
-            sent += 1
-            chunk = ""
+        if contract or project_name:
+            buttons.append(
+                InlineKeyboardButton(
+                    "💰 Project",
+                    url=_project_deep_link(project_name, contract),
+                )
+            )
 
-        chunk += block
-
-    if chunk:
         await update.message.reply_text(
-            chunk,
+            block,
             parse_mode="HTML",
             disable_web_page_preview=True,
+            reply_markup=InlineKeyboardMarkup([buttons]) if buttons else None,
         )
 
     await update.message.reply_text(
-        "♻️ <b>Full KOL history loaded.</b>\n"
-        "Tap the KOL name again anytime to refresh the stats.",
+        "───────────────────────\n"
+        f"┌🎯 Amount of 2x Hits: {hit_2x}\n"
+        f"├🎯 Amount of 10x Hits: {hit_10x}\n"
+        f"├🎯 Amount of 100x Hits: {hit_100x}\n"
+        f"└🎯 Amount of 1000x Hits: {hit_1000x}\n"
+        "───────────────────────",
         parse_mode="HTML",
         disable_web_page_preview=True,
         reply_markup=main_menu(),
     )
 
-
-# =========================================================
-# START
-# =========================================================
 
 async def start( update: Update, context: ContextTypes.DEFAULT_TYPE ):
 
@@ -1234,6 +1449,17 @@ async def start( update: Update, context: ContextTypes.DEFAULT_TYPE ):
     if context.args:
 
         deep_link = str(context.args[0]).strip()
+
+        if deep_link.lower().startswith("project_"):
+
+            project_key = deep_link[8:]
+
+            await show_project_profile(
+                update,
+                project_key
+            )
+
+            return
 
         if deep_link.lower().startswith("kol_"):
 
@@ -3387,7 +3613,8 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
             f'Dropped a Call 🔮\n\n'
 
             f"🔮 Token Symbol 🔮 "
-            f"{safe_token}\n"
+            f'<a href="{html.escape(_project_deep_link(project_name, contract), quote=True)}">'
+            f"{safe_token}</a>\n"
 
             f"🔮 Call MC 🔮 "
             f"{mc_display}\n"
@@ -4520,4 +4747,4 @@ def main():
 
 if __name__ == "__main__":
 
-    main()
+    main() 
