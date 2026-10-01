@@ -40,10 +40,15 @@ from database import (
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID", "").strip()
+# Only this Telegram numeric user ID can manage milestone settings/videos.
+OWNER_USER_ID = os.getenv("OWNER_USER_ID", "").strip()
 
 LIVE_CHANNEL = "@KOLPulse_Live"
 BOT_USERNAME = "@KOLPulse_Live_bot"
 BOT_LINK = "https://t.me/KOLPulse_Live_bot"
+
+if not OWNER_USER_ID:
+    print("⚠️ OWNER_USER_ID is not configured. Owner-only settings are locked until it is set.")
 
 DEX_API_BASE = "https://api.dexscreener.com"
 
@@ -1816,14 +1821,14 @@ async def start( update: Update, context: ContextTypes.DEFAULT_TYPE ):
                 user_id=update.effective_user.id,
             )
 
-            if member.status in ["administrator", "creator"]:
+            if member.status in ["administrator", "creator"] and is_owner_user(update.effective_user.id):
 
                 register_video_request_owner(
                     update.effective_user.id
                 )
 
                 print(
-                    "🎥 Video request owner registered: "
+                    "🎥 Configured owner registered as video request owner: "
                     f"{update.effective_user.id}"
                 )
 
@@ -3006,12 +3011,31 @@ def get_pump_milestone( multiplier ):
 
 
 # =========================================================
+# OWNER ACCESS CONTROL
+# =========================================================
+def is_owner_user(user_id):
+    """Return True only for the configured owner Telegram user ID."""
+    if not user_id or not OWNER_USER_ID:
+        return False
+    return str(user_id).strip() == OWNER_USER_ID
+
+
+# =========================================================
 # SET MINIMUM PUMP MILESTONE
 # =========================================================
 
 async def setmilestone( update: Update, context: ContextTypes.DEFAULT_TYPE ):
 
     global MIN_PUMP_MILESTONE
+
+    # OWNER ONLY — never expose milestone controls to normal users.
+    user_id = update.effective_user.id if update.effective_user else None
+    if not is_owner_user(user_id):
+        if update.message:
+            await update.message.reply_text(
+                "⛔ You are not authorized to manage KOLPulse settings."
+            )
+        return
 
     # This command is intended for private bot chat.
     if update.effective_chat and update.effective_chat.type != "private":
@@ -3078,12 +3102,10 @@ async def setmilestone( update: Update, context: ContextTypes.DEFAULT_TYPE ):
     # IMPORTANT: /setmilestone controls the pump threshold only.
     # It does NOT save/replace the normal promotional-call video.
     # Instead, it asks for a dedicated video for this milestone.
-    user_id = update.effective_user.id if update.effective_user else None
-    if user_id:
-        set_pending_milestone_video_request(
-            user_id,
-            MIN_PUMP_MILESTONE
-        )
+    set_pending_milestone_video_request(
+        user_id,
+        MIN_PUMP_MILESTONE
+    )
 
     await update.message.reply_text(
         "✅ Milestone setting updated!\n\n"
@@ -5248,6 +5270,10 @@ async def promotional_video_handler( update: Update, context: ContextTypes.DEFAU
 
     user_id = update.effective_user.id
 
+    # OWNER ONLY — milestone videos are private owner controls.
+    if not is_owner_user(user_id):
+        return
+
     # -----------------------------------------------------
     # DEDICATED MILESTONE VIDEO
     # -----------------------------------------------------
@@ -5552,4 +5578,4 @@ def main():
 
 if __name__ == "__main__":
 
-    main()
+    main() 
