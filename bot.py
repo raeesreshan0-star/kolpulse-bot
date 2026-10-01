@@ -2631,6 +2631,116 @@ async def fetch_live_chain_symbol(contract):
     )
 
 
+def fetch_dex_token_identity_sync( contract, chain_symbol=None ):
+
+    if not contract:
+
+        return None, None
+
+    contract = contract.strip()
+
+    chain_id = DEX_CHAIN_MAP.get(
+        (chain_symbol or "").upper()
+    )
+
+    urls = []
+
+    if chain_id:
+
+        encoded_contract = urllib.parse.quote(
+            contract,
+            safe=""
+        )
+
+        urls.append(
+            f"{DEX_API_BASE}/token-pairs/v1/"
+            f"{chain_id}/{encoded_contract}"
+        )
+
+        urls.append(
+            f"{DEX_API_BASE}/tokens/v1/"
+            f"{chain_id}/{encoded_contract}"
+        )
+
+    encoded_query = urllib.parse.quote(
+        contract,
+        safe=""
+    )
+
+    urls.append(
+        f"{DEX_API_BASE}/latest/dex/search"
+        f"?q={encoded_query}"
+    )
+
+    for api_url in urls:
+
+        try:
+            request = urllib.request.Request(
+                api_url,
+                headers={"User-Agent": "KOLPulse/1.0"}
+            )
+
+            with urllib.request.urlopen(
+                request,
+                timeout=12
+            ) as response:
+                raw = response.read()
+
+            data = json.loads(raw.decode("utf-8"))
+
+            if isinstance(data, list):
+                pairs = data
+            elif isinstance(data, dict):
+                pairs = data.get("pairs") or []
+            else:
+                pairs = []
+
+            if not pairs:
+                continue
+
+            # Prefer the pair whose base token address matches the CA.
+            for pair in pairs:
+                if not isinstance(pair, dict):
+                    continue
+
+                base = pair.get("baseToken") or {}
+                address = str(base.get("address") or "").strip()
+
+                if address and address.lower() == contract.lower():
+                    name = str(base.get("name") or "").strip()
+                    symbol = str(base.get("symbol") or "").strip()
+                    return (name or None, ("$" + symbol) if symbol else None)
+
+            # Fallback to the first usable base token.
+            for pair in pairs:
+                if not isinstance(pair, dict):
+                    continue
+
+                base = pair.get("baseToken") or {}
+                name = str(base.get("name") or "").strip()
+                symbol = str(base.get("symbol") or "").strip()
+
+                if name or symbol:
+                    return (name or None, ("$" + symbol) if symbol else None)
+
+        except Exception as error:
+            print(
+                "⚠️ DexScreener token identity request failed: "
+                f"{type(error).__name__}: {error}"
+            )
+
+    return None, None
+
+
+async def fetch_dex_token_identity( contract, chain_symbol=None ):
+
+    return await asyncio.to_thread(
+        fetch_dex_token_identity_sync,
+        contract,
+        chain_symbol
+    )
+
+
 def fetch_dex_market_cap_sync( contract, chain_symbol=None ):
 
     if not contract:
@@ -3992,18 +4102,49 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
         contract
     )
 
-    print(
-        f"🪙 Project: "
-        f"{project_name}"
-    )
-
     # -----------------------------------------------------
-    # TOKEN
+    # TOKEN / PROJECT IDENTITY
     # -----------------------------------------------------
 
     token_symbol = detect_token_symbol(
         text,
         project_name
+    )
+
+    # If the source call does not contain a clean $TOKEN, resolve the
+    # token identity from the contract so the database never stores the
+    # CA prefix (for example "9XsgrA9...") as the project name.
+    dex_name, dex_symbol = await fetch_dex_token_identity(
+        contract,
+        chain_symbol
+    )
+
+    if dex_symbol:
+        token_symbol = dex_symbol
+
+    if (
+        dex_symbol
+        and (
+            not project_name
+            or project_name == contract[:12]
+            or not str(project_name).startswith("$")
+        )
+    ):
+        project_name = dex_symbol
+
+    elif (
+        token_symbol
+        and (
+            not project_name
+            or project_name == contract[:12]
+            or not str(project_name).startswith("$")
+        )
+    ):
+        project_name = token_symbol
+
+    print(
+        f"🪙 Project: "
+        f"{project_name}"
     )
 
     print(
@@ -4173,10 +4314,6 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
             f'🔮 <a href="{kol_link}">'
             f'{safe_channel}</a> '
             f'Dropped a Call 🔮\n\n'
-
-            f"🔮 Project Name 🔮 "
-            f'<a href="{html.escape(_project_deep_link(project_name, contract), quote=True)}">'
-            f"{html.escape(str(project_name or 'Unknown Project'))}</a>\n"
 
             f"🔮 Token Symbol 🔮 "
             f'<a href="{html.escape(_project_deep_link(project_name, contract), quote=True)}">'
