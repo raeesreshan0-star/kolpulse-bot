@@ -1647,7 +1647,7 @@ async def show_project_profile(update, project_key):
             kol_url = f"{BOT_LINK}?start=kol_{kol_start}"
             safe_kol_url = html.escape(kol_url, quote=True)
             inline_links.append(
-                f'<a href="{safe_kol_url}">{tg_custom_emoji(PREMIUM_KOL_EMOJI_ID, "🎤")} KOL Stats</a>'
+                f'<a href="{safe_kol_url}">🔮 KOL Stats</a>'
             )
 
         if inline_links:
@@ -4430,7 +4430,7 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
         alert_text = (
             f'{chain_emoji} <b>CALL ALERT:</b> '
             f'<a href="{project_url}"><b>{safe_project_name}</b></a> '
-            f'{tg_custom_emoji(PREMIUM_KOL_EMOJI_ID, "🎤")}\n\n'
+            f'🔮\n\n'
 
             f'<a href="{call_url}">{safe_call_channel}</a> '
             f'just called at {mc_display}.\n\n'
@@ -4444,7 +4444,7 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
             f'{tg_custom_emoji(PREMIUM_CALL_EMOJI_ID, "🔎")} View Call</a> '
 
             f'<a href="{kol_url}">'
-            f'{tg_custom_emoji(PREMIUM_KOL_EMOJI_ID, "🎤")} KOL Stats</a> '
+            f'🔮 KOL Stats</a> '
 
             f'<a href="{bot_url}">{tg_custom_emoji(PREMIUM_BOT_EMOJI_ID, "🤖")} BOT</a>'
         )
