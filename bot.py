@@ -45,13 +45,6 @@ LIVE_CHANNEL = "@KOLPulse_Live"
 BOT_USERNAME = "@KOLPulse_Live_bot"
 BOT_LINK = "https://t.me/KOLPulse_Live_bot"
 
-# Fixed promotional video sent with every detected call.
-# Keep fixed_video.mp4 in the same folder as bot.py.
-FIXED_VIDEO_PATH = os.getenv(
-    "FIXED_VIDEO_PATH",
-    "fixed_video.mp4"
-).strip()
-
 DEX_API_BASE = "https://api.dexscreener.com"
 
 TRACK_INTERVAL_SECONDS = 60
@@ -125,6 +118,167 @@ def ensure_tracking_requests_table():
     cursor = conn.cursor()
 
     cursor.execute(""" CREATE TABLE IF NOT EXISTS channel_tracking_requests ( id INTEGER PRIMARY KEY AUTOINCREMENT, channel_username TEXT NOT NULL UNIQUE, user_id INTEGER NOT NULL, status TEXT NOT NULL DEFAULT 'pending', created_at TEXT NOT NULL, updated_at TEXT NOT NULL ) """)
+
+    conn.commit()
+    conn.close()
+
+
+# =========================================================
+# VIDEO REQUEST TABLES
+# =========================================================
+
+def ensure_video_request_tables():
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS video_request_owners (
+            user_id INTEGER PRIMARY KEY,
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS pending_video_requests (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            call_id INTEGER NOT NULL UNIQUE,
+            user_id INTEGER NOT NULL,
+            caption TEXT NOT NULL,
+            status TEXT NOT NULL DEFAULT 'pending',
+            created_at TEXT NOT NULL,
+            updated_at TEXT NOT NULL
+        )
+    """)
+
+    conn.commit()
+    conn.close()
+
+
+def register_video_request_owner(user_id):
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT OR REPLACE INTO video_request_owners
+        (user_id, created_at, updated_at)
+        VALUES (
+            ?,
+            COALESCE(
+                (SELECT created_at FROM video_request_owners WHERE user_id = ?),
+                ?
+            ),
+            ?
+        )
+    """, (user_id, user_id, now, now))
+
+    conn.commit()
+    conn.close()
+
+
+def get_video_request_owner():
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        SELECT user_id
+        FROM video_request_owners
+        ORDER BY updated_at DESC
+        LIMIT 1
+    """)
+
+    row = cursor.fetchone()
+    conn.close()
+
+    return row[0] if row else None
+
+
+def save_pending_video_request(call_id, user_id, caption):
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        INSERT OR REPLACE INTO pending_video_requests
+        (call_id, user_id, caption, status, created_at, updated_at)
+        VALUES (
+            ?, ?, ?, 'pending',
+            COALESCE(
+                (SELECT created_at FROM pending_video_requests WHERE call_id = ?),
+                ?
+            ),
+            ?
+        )
+    """, (call_id, user_id, caption, call_id, now, now))
+
+    conn.commit()
+    conn.close()
+
+
+def get_pending_video_request(user_id, call_id=None):
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    if call_id is not None:
+
+        cursor.execute("""
+            SELECT id, call_id, user_id, caption
+            FROM pending_video_requests
+            WHERE call_id = ? AND user_id = ? AND status = 'pending'
+            LIMIT 1
+        """, (call_id, user_id))
+
+    else:
+
+        cursor.execute("""
+            SELECT id, call_id, user_id, caption
+            FROM pending_video_requests
+            WHERE user_id = ? AND status = 'pending'
+            ORDER BY id DESC
+            LIMIT 1
+        """, (user_id,))
+
+    row = cursor.fetchone()
+    conn.close()
+
+    return row
+
+
+def complete_pending_video_request(call_id):
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE pending_video_requests
+        SET status = 'completed', updated_at = ?
+        WHERE call_id = ? AND status = 'pending'
+    """, (now, call_id))
+
+    conn.commit()
+    conn.close()
+
+
+def save_call_video(call_id, video_file_id):
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute("""
+        UPDATE calls
+        SET video_file_id = ?
+        WHERE id = ?
+    """, (video_file_id, call_id))
 
     conn.commit()
     conn.close()
@@ -399,6 +553,40 @@ def request_buttons( user_id, channel ):
 # =========================================================
 
 async def start( update: Update, context: ContextTypes.DEFAULT_TYPE ):
+
+    # A private /start from a Telegram admin registers that user
+    # as the recipient for automatic call-video requests.
+    if (
+        update.effective_chat
+        and update.effective_chat.type == "private"
+        and update.effective_user
+        and GROUP_CHAT_ID
+    ):
+
+        try:
+
+            member = await context.bot.get_chat_member(
+                chat_id=int(GROUP_CHAT_ID),
+                user_id=update.effective_user.id,
+            )
+
+            if member.status in ["administrator", "creator"]:
+
+                register_video_request_owner(
+                    update.effective_user.id
+                )
+
+                print(
+                    "🎥 Video request owner registered: "
+                    f"{update.effective_user.id}"
+                )
+
+        except Exception as error:
+
+            print(
+                "⚠️ Could not register video request owner: "
+                f"{type(error).__name__}: {error}"
+            )
 
     context.user_data[
         "waiting_for_channel"
@@ -2212,31 +2400,11 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
     )
 
     # =====================================================
-    # ORIGINAL MEDIA (OPTIONAL)
+    # VIDEO POLICY
     # =====================================================
-    # The detected KOL post may or may not contain a video.
-    # KOLPulse now uses our own fixed promotional video for
-    # every valid detected call.
-
-    original_video_file_id = None
-
-    if message.video:
-
-        original_video_file_id = message.video.file_id
-
-        print(
-            "🎥 Original KOL video detected "
-            "(fixed promo video will be used)"
-        )
-
-    elif message.animation:
-
-        original_video_file_id = message.animation.file_id
-
-        print(
-            "🎞️ Original KOL animation detected "
-            "(fixed promo video will be used)"
-        )
+    # The original KOL media is never forwarded.
+    # After a valid call is detected, KOLPulse asks the
+    # registered owner for the promotional video privately.
 
     # =====================================================
     # TEXT / CAPTION
@@ -2490,12 +2658,9 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
                 )
             ),
 
-            # =================================================
-            # IMPORTANT:
-            # Save Telegram's original video file_id.
-            # =================================================
-
-            video_file_id=original_video_file_id,
+            # The KOL's original media is intentionally NOT used.
+            # The owner supplies the promotional video privately.
+            video_file_id=None,
 
             status="live",
         )
@@ -2507,12 +2672,6 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
         print(
             f" Call ID: {call_id}"
         )
-
-        if original_video_file_id:
-
-            print(
-                "🎥 Original video file_id saved with call."
-            )
 
     except Exception as error:
 
@@ -2607,43 +2766,72 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
         )
 
         # =================================================
-        # FIXED PROMOTIONAL VIDEO SEND
+        # PRIVATE VIDEO REQUEST
         # =================================================
-        # Every valid detected call is published with the
-        # same fixed promotional video supplied by the owner.
-        #
-        # The original KOL media is NOT forwarded.
-        # =================================================
+        # Do not publish the call until the registered owner
+        # supplies the promotional video in private chat.
 
-        if not os.path.isfile(FIXED_VIDEO_PATH):
+        video_owner = get_video_request_owner()
+
+        if not video_owner:
 
             print(
-                "❌ Fixed promotional video not found: "
-                f"{FIXED_VIDEO_PATH}"
+                "⚠️ No video request owner registered. "
+                "Call is saved but not published."
             )
 
-            print(
-                "⏭️ Initial alert not published."
-            )
+            if GROUP_CHAT_ID:
+
+                try:
+                    await context.bot.send_message(
+                        chat_id=int(GROUP_CHAT_ID),
+                        text=(
+                            "⚠️ VIDEO REQUIRED\n\n"
+                            f"Call #{call_id} from {channel} is waiting for a promotional video.\n\n"
+                            "The bot owner must open the bot privately and send /start first."
+                        ),
+                        disable_web_page_preview=True,
+                    )
+                except Exception as notify_error:
+                    print(
+                        "⚠️ Could not notify admin group: "
+                        f"{type(notify_error).__name__}: {notify_error}"
+                    )
 
             return
 
-        with open(FIXED_VIDEO_PATH, "rb") as fixed_video:
+        save_pending_video_request(
+            call_id=call_id,
+            user_id=video_owner,
+            caption=alert_text,
+        )
 
-            await context.bot.send_video(
-
-                chat_id=LIVE_CHANNEL,
-
-                video=fixed_video,
-
-                caption=alert_text,
-
-                parse_mode="HTML",
-            )
+        await context.bot.send_message(
+            chat_id=video_owner,
+            text=(
+                "🎥 <b>VIDEO REQUIRED FOR NEW CALL</b>\n\n"
+                f"📞 Call ID: <code>{call_id}</code>\n"
+                f"👤 KOL: {safe_channel}\n"
+                f"🔮 Token: {safe_token}\n"
+                f"💰 Call MC: {mc_display}\n\n"
+                "Send the promotional video now.\n"
+                "The video will be attached to this call and published automatically."
+            ),
+            parse_mode="HTML",
+            reply_markup=InlineKeyboardMarkup([
+                [
+                    InlineKeyboardButton(
+                        "🎥 Send Video",
+                        callback_data=f"video_for_call:{call_id}"
+                    )
+                ]
+            ]),
+            disable_web_page_preview=True,
+        )
 
         print(
-            f"✅ Fixed promotional video alert sent "
-            f"to {LIVE_CHANNEL}"
+            f"🎥 Video requested privately from {video_owner} "
+            f"for call #{call_id}"
         )
 
     except Exception as error:
@@ -2667,6 +2855,51 @@ async def button_handler( update: Update, context: ContextTypes.DEFAULT_TYPE ):
     query = update.callback_query
 
     data = query.data
+
+    # -----------------------------------------------------
+    # VIDEO REQUEST BUTTON
+    # -----------------------------------------------------
+
+    if data.startswith("video_for_call:"):
+
+        await query.answer()
+
+        try:
+            call_id = int(data.split(":", 1)[1])
+        except (ValueError, IndexError):
+            return
+
+        if query.message.chat.type != "private":
+            await query.answer(
+                "Open the bot in private chat first.",
+                show_alert=True
+            )
+            return
+
+        pending = get_pending_video_request(
+            query.from_user.id,
+            call_id
+        )
+
+        if not pending:
+            await query.edit_message_text(
+                "⚠️ This video request is no longer pending."
+            )
+            return
+
+        context.user_data[
+            "pending_video_call_id"
+        ] = call_id
+
+        await query.edit_message_text(
+            "🎥 <b>Send the promotional video now.</b>\n\n"
+            f"📞 Call ID: <code>{call_id}</code>\n\n"
+            "Send the video as a Telegram video message.\n"
+            "Once received, KOLPulse will publish it automatically with the call.",
+            parse_mode="HTML"
+        )
+
+        return
 
     # -----------------------------------------------------
     # LEADERBOARD
@@ -3352,6 +3585,96 @@ async def verify_bot_is_channel_admin( context, channel ):
 
 
 # =========================================================
+# PROMOTIONAL VIDEO HANDLER
+# =========================================================
+
+async def promotional_video_handler( update: Update, context: ContextTypes.DEFAULT_TYPE ):
+
+    message = update.message
+
+    if not message or not update.effective_user:
+        return
+
+    if not update.effective_chat or update.effective_chat.type != "private":
+        return
+
+    user_id = update.effective_user.id
+    requested_call_id = context.user_data.get(
+        "pending_video_call_id"
+    )
+
+    pending = get_pending_video_request(
+        user_id,
+        requested_call_id
+    )
+
+    if not pending:
+        pending = get_pending_video_request(user_id)
+
+    if not pending:
+        await message.reply_text(
+            "⚠️ No pending call is waiting for a video right now."
+        )
+        return
+
+    _, call_id, _, caption = pending
+
+    if message.video:
+        video_file_id = message.video.file_id
+    elif message.animation:
+        video_file_id = message.animation.file_id
+    else:
+        await message.reply_text(
+            "❌ Please send the promotional video as a Telegram video."
+        )
+        return
+
+    try:
+        await context.bot.send_video(
+            chat_id=LIVE_CHANNEL,
+            video=video_file_id,
+            caption=caption,
+            parse_mode="HTML",
+        )
+
+        save_call_video(
+            call_id,
+            video_file_id
+        )
+
+        complete_pending_video_request(
+            call_id
+        )
+
+        context.user_data.pop(
+            "pending_video_call_id",
+            None
+        )
+
+        await message.reply_text(
+            "✅ Video received and call published successfully!\n\n"
+            f"📞 Call ID: {call_id}\n"
+            "📡 Published to KOLPulse Live."
+        )
+
+        print(
+            f"✅ Promotional video received and published for call #{call_id}"
+        )
+
+    except Exception as error:
+
+        print(
+            "❌ Could not publish promotional video: "
+            f"{type(error).__name__}: {error}"
+        )
+
+        await message.reply_text(
+            "❌ Video could not be published.\n\n"
+            "Please send the video again."
+        )
+
+
+# =========================================================
 # TEXT MESSAGE HANDLER
 # =========================================================
 
@@ -3754,6 +4077,8 @@ def main():
 
     ensure_tracking_requests_table()
 
+    ensure_video_request_tables()
+
     ensure_call_tracking_columns()
 
     print(
@@ -3806,11 +4131,7 @@ def main():
     )
 
     print(
-        "🎥 Fixed promotional video enabled."
-    )
-
-    print(
-        f"🎬 Fixed video path: {FIXED_VIDEO_PATH}"
+        "🎥 Private promotional video request system enabled."
     )
 
     app = (
@@ -3852,6 +4173,13 @@ def main():
         MessageHandler(
             filters.UpdateType.CHANNEL_POST,
             channel_post_handler,
+        )
+    )
+
+    app.add_handler(
+        MessageHandler(
+            filters.VIDEO | filters.ANIMATION,
+            promotional_video_handler,
         )
     )
 
