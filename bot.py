@@ -1114,8 +1114,6 @@ async def show_project_profile(update, project_key):
         )
     ]
 
-    buttons = []
-
     for index, row in enumerate(rows, 1):
 
         (
@@ -1186,72 +1184,61 @@ async def show_project_profile(update, project_key):
             )
         )
 
-        row_buttons = []
+        # KolScope-style inline text links instead of Telegram buttons.
+        # These appear directly under each call inside the message.
+        inline_links = []
 
         if original_call_link:
-            row_buttons.append(
-                InlineKeyboardButton(
-                    "🔎 View Call",
-                    url=str(original_call_link),
-                )
+            safe_call_url = html.escape(str(original_call_link), quote=True)
+            inline_links.append(
+                f'<a href="{safe_call_url}">🔎 View Call</a>'
             )
 
         if kol_username:
-            row_buttons.append(
-                InlineKeyboardButton(
-                    "💍 KOL Stats",
-                    url=(
-                        f"{BOT_LINK}?start=kol_"
-                        f"{html.escape(str(kol_username).lstrip('@'), quote=True)}"
-                    ),
-                )
+            kol_start = urllib.parse.quote(
+                str(kol_username).lstrip("@"),
+                safe=""
+            )
+            kol_url = f"{BOT_LINK}?start=kol_{kol_start}"
+            safe_kol_url = html.escape(kol_url, quote=True)
+            inline_links.append(
+                f'<a href="{safe_kol_url}">💍 KOL Stats</a>'
             )
 
-        if row_buttons:
-            buttons.append(row_buttons)
+        if inline_links:
+            parts.append(" ".join(inline_links) + "\n")
 
         if index != len(rows):
             parts.append("\n───────────────────────\n")
 
     text = "".join(parts)
 
-    # Keep the profile on one Telegram page/message whenever possible.
-    # If a very large project exceeds Telegram's limit, split safely.
+    # No inline keyboard here: View Call / KOL Stats are normal
+    # clickable text links, matching the KolScope-style layout.
     if len(text) <= 3900:
         await update.message.reply_text(
             text,
             parse_mode="HTML",
             disable_web_page_preview=True,
-            reply_markup=InlineKeyboardMarkup(buttons) if buttons else None,
         )
     else:
-        # Large projects: preserve the same data and buttons in compact chunks.
+        # Split at logical call blocks so links stay with their call.
         current = ""
-        chunk_index = 0
-
         for part in parts:
             if current and len(current) + len(part) > 3900:
-                markup = None
-                if chunk_index == len(parts) - 1 and buttons:
-                    markup = InlineKeyboardMarkup(buttons)
-
                 await update.message.reply_text(
                     current,
                     parse_mode="HTML",
                     disable_web_page_preview=True,
-                    reply_markup=markup,
                 )
                 current = ""
-
             current += part
-            chunk_index += 1
 
         if current:
             await update.message.reply_text(
                 current,
                 parse_mode="HTML",
                 disable_web_page_preview=True,
-                reply_markup=InlineKeyboardMarkup(buttons) if buttons else None,
             )
 
 
@@ -1343,8 +1330,6 @@ async def show_kol_profile(update, channel):
         )
     ]
 
-    buttons = []
-
     for index, row in enumerate(rows[:6], 1):
         (
             call_id, kol_username, project_name, project_link,
@@ -1383,20 +1368,24 @@ async def show_kol_profile(update, channel):
             f"Time: {safe_time}\n"
         )
 
-        row_buttons = []
+        # Inline text links (no external Telegram buttons).
+        inline_links = []
+
         if original_call_link:
-            row_buttons.append(
-                InlineKeyboardButton("🔎 View Call", url=str(original_call_link))
+            safe_call_url = html.escape(str(original_call_link), quote=True)
+            inline_links.append(
+                f'<a href="{safe_call_url}">🔎 View Call</a>'
             )
+
         if contract or project_name:
-            row_buttons.append(
-                InlineKeyboardButton(
-                    "💰 Project",
-                    url=_project_deep_link(project_name, contract),
-                )
+            project_url = _project_deep_link(project_name, contract)
+            safe_project_url = html.escape(str(project_url), quote=True)
+            inline_links.append(
+                f'<a href="{safe_project_url}">💰 Project</a>'
             )
-        if row_buttons:
-            buttons.append(row_buttons)
+
+        if inline_links:
+            parts.append(" ".join(inline_links) + "\n")
 
         if index != min(6, len(rows)):
             parts.append("\n───────────────────────\n")
@@ -1417,10 +1406,9 @@ async def show_kol_profile(update, channel):
             text,
             parse_mode="HTML",
             disable_web_page_preview=True,
-            reply_markup=InlineKeyboardMarkup(buttons) if buttons else None,
         )
     else:
-        # Fallback only for unusually long profiles.
+        # Fallback for unusually long profiles; no keyboard buttons.
         await update.message.reply_text(
             text[:3900],
             parse_mode="HTML",
@@ -1430,7 +1418,6 @@ async def show_kol_profile(update, channel):
             text[3900:],
             parse_mode="HTML",
             disable_web_page_preview=True,
-            reply_markup=InlineKeyboardMarkup(buttons) if buttons else None,
         )
 
 
