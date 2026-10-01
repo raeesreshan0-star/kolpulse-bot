@@ -30,5 +30,6 @@ jobs:
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           GROUP_CHAT_ID: ${{ secrets.GROUP_CHAT_ID }}
+          OWNER_USER_ID: ${{ secrets.OWNER_USER_ID }}
           PYTHONUNBUFFERED: "1"
-        run: python -u bot.py
+        run: python -u bot.py 
