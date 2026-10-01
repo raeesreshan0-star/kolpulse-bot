@@ -72,7 +72,7 @@ PREMIUM_HIT_2X_EMOJI_ID = "6192905389822978354"
 PREMIUM_CA_EMOJI_ID = "5258477770735885832"
 PREMIUM_BOT_EMOJI_ID = "5258093637450866522"
 
-# Network emoji IDs supplied by the owner, in the same order supplied:
+# Premium emojis are rendered with Telegram HTML <tg-emoji> entities.\n# The bot does not need to replace these IDs with ordinary Unicode emojis.\n# Network emoji IDs supplied by the owner, in the same order supplied:
 # SOL, BASE, BSC, ETH, ARB, POLY, AVAX, OP, ZKSYNC, LINEA, RH.
 PREMIUM_CHAIN_EMOJI_MAP = {
     "SOL": "6193007360936517935",
@@ -89,6 +89,10 @@ PREMIUM_CHAIN_EMOJI_MAP = {
 }
 
 def tg_custom_emoji(emoji_id, fallback="🔹"):
+    """Return a Telegram Premium custom emoji entity with a safe fallback."""
+    if not emoji_id:
+        return fallback
+
     return (
         f'<tg-emoji emoji-id="{html.escape(str(emoji_id), quote=True)}">'
         f'{fallback}</tg-emoji>'
@@ -4437,7 +4441,9 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
         )
 
         alert_text = (
-            f'{chain_emoji} <b>CALL ALERT:</b> '
+            f'{chain_emoji} '
+            f'{tg_custom_emoji(PREMIUM_CALL_EMOJI_ID, "📞")} '
+            f'<b>CALL ALERT:</b> '
             f'<a href="{project_url}"><b>{safe_project_name}</b></a> '
             f'{tg_custom_emoji(PREMIUM_KOL_EMOJI_ID, "🎤")}\n\n'
 
@@ -5677,4 +5683,4 @@ def main():
 
 if __name__ == "__main__":
 
-    main() 
+    main()  
