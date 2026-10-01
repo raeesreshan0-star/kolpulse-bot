@@ -47,6 +47,23 @@ LIVE_CHANNEL = "@KOLPulse_Live"
 BOT_USERNAME = "@KOLPulse_Live_bot"
 BOT_LINK = "https://t.me/KOLPulse_Live_bot"
 
+# Persistent reusable promotional video. Set this to the Telegram
+# file_id once; GitHub Actions will keep using the same video after restarts.
+PROMOTIONAL_VIDEO_FILE_ID = os.getenv("PROMOTIONAL_VIDEO_FILE_ID", "").strip()
+
+# Optional Telegram Premium custom emoji IDs. If an ID is empty, the
+# normal fallback emoji is used so the alert still works.
+PREMIUM_EMOJI_CALL = os.getenv("PREMIUM_EMOJI_CALL", "").strip()
+PREMIUM_EMOJI_PLANE = os.getenv("PREMIUM_EMOJI_PLANE", "").strip()
+PREMIUM_EMOJI_CONTRACT = os.getenv("PREMIUM_EMOJI_CONTRACT", "").strip()
+PREMIUM_EMOJI_KOL = os.getenv("PREMIUM_EMOJI_KOL", "").strip()
+PREMIUM_EMOJI_BOT = os.getenv("PREMIUM_EMOJI_BOT", "").strip()
+
+def tg_emoji(emoji_id, fallback):
+    if emoji_id:
+        return f'<tg-emoji emoji-id="{html.escape(str(emoji_id), quote=True)}">{fallback}</tg-emoji>'
+    return fallback
+
 if not OWNER_USER_ID:
     print("⚠️ OWNER_USER_ID is not configured. Owner-only settings are locked until it is set.")
 
@@ -62,35 +79,6 @@ TOP_KOLS_LIMIT = 3
 # Minimum X milestone that should trigger a pump alert.
 # Can be changed at runtime with: /setmilestone 2
 MIN_PUMP_MILESTONE = 2
-
-# =========================================================
-# PREMIUM CUSTOM EMOJIS
-# =========================================================
-PREMIUM_CALL_EMOJI_ID = "6044119257308995249"
-PREMIUM_KOL_EMOJI_ID = "6217412791041528130"
-PREMIUM_HIT_2X_EMOJI_ID = "6221788387758578190"
-
-PREMIUM_CHAIN_EMOJI_MAP = {
-    "SOL": "6193007360936517935",
-    "BASE": "6195135444217243497",
-    "BSC": "6192827165583614102",
-    "ETH": "6192830412578890176",
-    "ARB": "6192715303160390844",
-    "POLY": "6192651621680292239",
-    "AVAX": "5258477770735885832",
-    "OP": "5244555445267367519",
-    "ZKSYNC": "6192905389822978354",
-    "LINEA": "6192617648488980644",
-    "RH": "5258093637450866522",
-}
-
-def tg_custom_emoji(emoji_id, fallback="🔮"):
-    return f'<tg-emoji emoji-id="{html.escape(str(emoji_id), quote=True)}">{fallback}</tg-emoji>'
-
-def chain_custom_emoji(chain_symbol):
-    chain = str(chain_symbol or "").strip().upper()
-    emoji_id = PREMIUM_CHAIN_EMOJI_MAP.get(chain)
-    return tg_custom_emoji(emoji_id, "⛓️") if emoji_id else "⛓️"
 
 
 # =========================================================
@@ -576,12 +564,10 @@ def get_saved_promotional_video():
     if row and row[0]:
         return row
 
-    # GitHub Actions runners are temporary, so the SQLite DB can be
-    # recreated on the next run. A GitHub secret can therefore keep
-    # the single promotional Telegram file_id persistent across restarts.
-    env_file_id = os.getenv("PROMOTIONAL_VIDEO_FILE_ID", "").strip()
-    if env_file_id:
-        return (env_file_id, "video")
+    # GitHub Actions runners are temporary. Keep the single reusable
+    # Telegram video persistent through a repository secret instead.
+    if PROMOTIONAL_VIDEO_FILE_ID:
+        return (PROMOTIONAL_VIDEO_FILE_ID, "video")
 
     return None
 
@@ -1864,6 +1850,10 @@ async def start( update: Update, context: ContextTypes.DEFAULT_TYPE ):
                 f"{update.effective_user.id}"
             )
 
+            # /start must NEVER ask for a promotional video.
+            # Video requests are triggered only by a newly detected call
+            # when no reusable promotional video has been configured.
+            print("✅ Owner verified. /start will not request a promotional video.")
 
         except Exception as error:
 
@@ -3177,22 +3167,22 @@ async def send_pump_alert( context, call_id, kol_username, project_name, call_mc
 
     alert_text = (
 
-        f"{tg_custom_emoji(PREMIUM_HIT_2X_EMOJI_ID, '🚀')} <b>{milestone}X PUMP HIT!</b>\n\n"
+        f"🚀 <b>{milestone}X PUMP HIT!</b>\n\n"
 
-        f"{tg_custom_emoji(PREMIUM_CALL_EMOJI_ID, '🔮')} <b>{safe_project}</b>\n"
+        f"🔮 <b>{safe_project}</b>\n"
 
-        f"{tg_custom_emoji(PREMIUM_KOL_EMOJI_ID, '👤')} KOL: "
+        f"👤 KOL: "
         f"<a href=\"{kol_link}\">"
         f"{safe_kol}"
         f"</a>\n\n"
 
-        f"{tg_custom_emoji(PREMIUM_CALL_EMOJI_ID, '💰')} Call MC: "
+        f"💰 Call MC: "
         f"{call_mc_text}\n"
 
-        f"{tg_custom_emoji(PREMIUM_CALL_EMOJI_ID, '📈')} Current MC: "
+        f"📈 Current MC: "
         f"{current_mc_text}\n"
 
-        f"{tg_custom_emoji(PREMIUM_HIT_2X_EMOJI_ID, '🚀')} Performance: "
+        f"🚀 Performance: "
         f"<b>{multiplier:.2f}X</b>\n\n"
 
         f"CA: <code>"
@@ -4398,35 +4388,21 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
             call_mc
         )
 
-        call_emoji = tg_custom_emoji(PREMIUM_CALL_EMOJI_ID, "🔮")
-        kol_emoji = tg_custom_emoji(PREMIUM_KOL_EMOJI_ID, "🔮")
-        chain_emoji = chain_custom_emoji(chain_symbol)
-
         alert_text = (
 
-            f'{call_emoji} <a href="{kol_link}">'
-            f'{safe_channel}</a> '
-            f'Dropped a Call {call_emoji}\n\n'
+            f'{tg_emoji(PREMIUM_EMOJI_CALL, "🟢")} <b>CALL ALERT: {html.escape(project_name)}</b> '
+            f'{tg_emoji(PREMIUM_EMOJI_PLANE, "✈️")}\n\n'
 
-            f"{call_emoji} Token Symbol {call_emoji} "
-            f'<a href="{html.escape(_project_deep_link(project_name, contract), quote=True)}">'
-            f"{safe_token}</a>\n"
+            f'<a href="{kol_link}">{safe_channel}</a> just called at <b>{mc_display}</b>.\n\n'
 
-            f"{call_emoji} Call MC {call_emoji} "
-            f"{mc_display}\n"
+            "We've started tracking it and will send performance alerts "
+            "when new X milestones are reached\n\n"
 
-            f"{chain_emoji} Chain Symbol {chain_emoji} "
-            f"{safe_chain}\n\n"
+            f'{tg_emoji(PREMIUM_EMOJI_CONTRACT, "📄")} <code>{safe_contract}</code>\n\n'
 
-            "We've started tracking it and "
-            "will send performance alerts "
-            "when new X milestones are reached.\n\n"
-
-            f"CA: <code>{safe_contract}</code>\n\n"
-
-            f'{call_emoji} <a href="{original_call_link}">CALL</a> '
-            f'{kol_emoji} <a href="{BOT_LINK}?start=kol_{html.escape(channel.lstrip("@"), quote=True)}">KOL</a> '
-            f'{call_emoji} <a href="{BOT_LINK}">BOT</a>'
+            f'{tg_emoji(PREMIUM_EMOJI_CALL, "🔍")} <a href="{original_call_link}">Call</a>❕'
+            f'{tg_emoji(PREMIUM_EMOJI_KOL, "🎤")} <a href="{BOT_LINK}?start=kol_{html.escape(channel.lstrip("@"), quote=True)}">KOL</a> '
+            f'{tg_emoji(PREMIUM_EMOJI_BOT, "🤖")} <a href="{BOT_LINK}">BOT</a>'
         )
 
         # =================================================
@@ -5451,30 +5427,6 @@ async def promotional_video_handler( update: Update, context: ContextTypes.DEFAU
 
 
 # =========================================================
-# OWNER VIDEO ID HELPER
-# =========================================================
-async def videoid(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.effective_user or not is_owner_user(update.effective_user.id):
-        return
-
-    saved = get_saved_promotional_video()
-    if not saved:
-        await update.message.reply_text(
-            "⚠️ No promotional video is saved yet."
-        )
-        return
-
-    file_id, video_type = saved
-    await update.message.reply_text(
-        "🎥 Promotional video file_id:\n\n"
-        f"<code>{html.escape(str(file_id))}</code>\n\n"
-        "Add this as the GitHub Actions secret <b>PROMOTIONAL_VIDEO_FILE_ID</b> "
-        "to keep the same video after every restart.",
-        parse_mode="HTML",
-    )
-
-
-# =========================================================
 # MAIN
 # =========================================================
 
@@ -5557,6 +5509,11 @@ def main():
         "🎥 Private promotional video request system enabled."
     )
 
+    if get_saved_promotional_video():
+        print("♻️ Reusable promotional video is configured and will NOT be requested on /start.")
+    else:
+        print("⚠️ No reusable promotional video configured yet; it will be requested only when a new call is detected.")
+
     app = (
         Application
         .builder()
@@ -5576,13 +5533,6 @@ def main():
         CommandHandler(
             "groupid",
             groupid
-        )
-    )
-
-    app.add_handler(
-        CommandHandler(
-            "videoid",
-            videoid
         )
     )
 
@@ -5639,4 +5589,4 @@ def main():
 
 if __name__ == "__main__":
 
-    main()
+    main() 
