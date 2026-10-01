@@ -5660,6 +5660,21 @@ def main():
         group=0,
     )
 
+    # Telegram sends an EDITED_MESSAGE update when the user edits an
+    # already-sent channel username. The screenshot shows the username
+    # messages as edited, so handle edited private text as well.
+    async def _edited_private_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        if update.edited_message:
+            await channel_message(update, context)
+
+    app.add_handler(
+        TypeHandler(
+            Update,
+            _edited_private_text_router,
+        ),
+        group=1,
+    )
+
     print(
         "✅ KOLPulse Bot is now running..."
     )
@@ -5674,6 +5689,10 @@ def main():
 
     print(
         "📨 Telegram allowed_updates: channel_post ENABLED"
+    )
+
+    print(
+        "✏️ Edited private-message tracking ENABLED"
     )
 
     app.run_polling(
