@@ -938,10 +938,11 @@ async def channel_message( update: Update, context: ContextTypes.DEFAULT_TYPE ):
     if not message or not message.text:
         return
 
-    message.text = message.text.strip()
-    print(f"📡 TRACK CHANNEL INPUT RECEIVED: {message.text}")
-
+    # Telegram Message.text is read-only. Never assign to message.text.
+    # Keep the cleaned text in a separate variable.
     message_text = message.text.strip()
+
+    print(f"📡 TRACK CHANNEL INPUT RECEIVED: {message_text}")
 # -----------------------------------------------------
     # SEARCH KOL
     # -----------------------------------------------------
