@@ -1368,24 +1368,9 @@ async def show_kol_profile(update, channel):
             f"Time: {safe_time}\n"
         )
 
-        # Inline text links (no external Telegram buttons).
-        inline_links = []
-
-        if original_call_link:
-            safe_call_url = html.escape(str(original_call_link), quote=True)
-            inline_links.append(
-                f'<a href="{safe_call_url}">🔎 View Call</a>'
-            )
-
-        if contract or project_name:
-            project_url = _project_deep_link(project_name, contract)
-            safe_project_url = html.escape(str(project_url), quote=True)
-            inline_links.append(
-                f'<a href="{safe_project_url}">💰 Project</a>'
-            )
-
-        if inline_links:
-            parts.append(" ".join(inline_links) + "\n")
+        # KOL Stats intentionally has NO View Call / Project links.
+        # It mirrors the KOLscope-style stats page: only the promoted
+        # project performance is shown here.
 
         if index != min(6, len(rows)):
             parts.append("\n───────────────────────\n")
@@ -4862,4 +4847,4 @@ def main():
 
 if __name__ == "__main__":
 
-    main()
+    main() 
