@@ -930,22 +930,22 @@ def update_request_status( channel, status ):
 
 
 async def channel_message( update: Update, context: ContextTypes.DEFAULT_TYPE ):
-    if update.message and update.message.text:
-        update.message.text = update.message.text.strip()
-        print(f"📡 TRACK CHANNEL INPUT RECEIVED: {update.message.text}")
+    # Telegram uses update.message for a fresh message and
+    # update.edited_message when the user edits it. Always use the
+    # effective message so Track My Channel works in both cases.
+    message = update.message or update.edited_message
 
+    if message and message.text:
+        message.text = message.text.strip()
+        print(f"📡 TRACK CHANNEL INPUT RECEIVED: {message.text}")
 
-    if not update.message:
-
+    if not message:
         return
 
-    if not update.message.text:
-
+    if not message.text:
         return
 
-    message_text = (
-        update.message.text.strip()
-    )
+    message_text = message.text.strip()
 
     # -----------------------------------------------------
     # SEARCH KOL
@@ -1012,7 +1012,7 @@ async def channel_message( update: Update, context: ContextTypes.DEFAULT_TYPE ):
             "waiting_for_channel"
         ] = True
 
-        await update.message.reply_text(
+        await message.reply_text(
 
             "❌ Bot Is Not Admin Yet\n\n"
 
@@ -1074,7 +1074,7 @@ async def channel_message( update: Update, context: ContextTypes.DEFAULT_TYPE ):
             f"{type(error).__name__}: {error}"
         )
 
-        await update.message.reply_text(
+        await message.reply_text(
 
             "⚠️ Could not check your "
             "channel status.\n\n"
@@ -1090,7 +1090,7 @@ async def channel_message( update: Update, context: ContextTypes.DEFAULT_TYPE ):
 
     if status == "approved":
 
-        await update.message.reply_text(
+        await message.reply_text(
 
             "✅ Channel Already Approved!\n\n"
 
@@ -1111,7 +1111,7 @@ async def channel_message( update: Update, context: ContextTypes.DEFAULT_TYPE ):
 
     if status == "pending":
 
-        await update.message.reply_text(
+        await message.reply_text(
 
             "⏳ Channel Already Pending!\n\n"
 
@@ -1155,7 +1155,7 @@ async def channel_message( update: Update, context: ContextTypes.DEFAULT_TYPE ):
 
         if not created:
 
-            await update.message.reply_text(
+            await message.reply_text(
 
                 "⏳ Channel Already Pending!\n\n"
 
@@ -1175,7 +1175,7 @@ async def channel_message( update: Update, context: ContextTypes.DEFAULT_TYPE ):
             f"{type(error).__name__}: {error}"
         )
 
-        await update.message.reply_text(
+        await message.reply_text(
 
             "⚠️ Could not create your "
             "tracking request.\n\n"
@@ -1297,7 +1297,7 @@ async def channel_message( update: Update, context: ContextTypes.DEFAULT_TYPE ):
             "Please contact support."
         )
 
-    await update.message.reply_text(
+    await message.reply_text(
 
         confirmation,
 
@@ -5664,7 +5664,8 @@ def main():
     # already-sent channel username. The screenshot shows the username
     # messages as edited, so handle edited private text as well.
     async def _edited_private_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if update.edited_message:
+        if update.edited_message and update.edited_message.text:
+            print(f"✏️ EDITED PRIVATE MESSAGE RECEIVED: {update.edited_message.text}")
             await channel_message(update, context)
 
     app.add_handler(
