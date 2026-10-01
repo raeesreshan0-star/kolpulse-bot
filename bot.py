@@ -72,7 +72,7 @@ PREMIUM_HIT_2X_EMOJI_ID = "6192905389822978354"
 PREMIUM_CA_EMOJI_ID = "5258477770735885832"
 PREMIUM_BOT_EMOJI_ID = "5258093637450866522"
 
-# Premium emojis are rendered with Telegram HTML <tg-emoji> entities.\n# The bot does not need to replace these IDs with ordinary Unicode emojis.\n# Network emoji IDs supplied by the owner, in the same order supplied:
+# Network emoji IDs supplied by the owner, in the same order supplied:
 # SOL, BASE, BSC, ETH, ARB, POLY, AVAX, OP, ZKSYNC, LINEA, RH.
 PREMIUM_CHAIN_EMOJI_MAP = {
     "SOL": "6193007360936517935",
@@ -89,10 +89,6 @@ PREMIUM_CHAIN_EMOJI_MAP = {
 }
 
 def tg_custom_emoji(emoji_id, fallback="🔹"):
-    """Return a Telegram Premium custom emoji entity with a safe fallback."""
-    if not emoji_id:
-        return fallback
-
     return (
         f'<tg-emoji emoji-id="{html.escape(str(emoji_id), quote=True)}">'
         f'{fallback}</tg-emoji>'
@@ -4441,9 +4437,7 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
         )
 
         alert_text = (
-            f'{chain_emoji} '
-            f'{tg_custom_emoji(PREMIUM_CALL_EMOJI_ID, "📞")} '
-            f'<b>CALL ALERT:</b> '
+            f'{chain_emoji} <b>CALL ALERT:</b> '
             f'<a href="{project_url}"><b>{safe_project_name}</b></a> '
             f'{tg_custom_emoji(PREMIUM_KOL_EMOJI_ID, "🎤")}\n\n'
 
@@ -4575,7 +4569,12 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
 # PREMIUM EMOJI ID COLLECTOR
 # =========================================================
 
-PREMIUM_EMOJI_USER_ID = 8260087850
+# Keep the Premium emoji collector tied to the SAME configured bot owner.
+# OWNER_USER_ID should be set in the GitHub Actions / hosting secrets.
+try:
+    PREMIUM_EMOJI_USER_ID = int(OWNER_USER_ID) if str(OWNER_USER_ID).strip().isdigit() else 0
+except Exception:
+    PREMIUM_EMOJI_USER_ID = 0
 
 async def premium_emoji_id_handler(update, context):
     message = update.effective_message
@@ -4598,6 +4597,52 @@ async def premium_emoji_id_handler(update, context):
     await message.reply_text(
         "⚠️ Is message mein Premium Custom Emoji detect nahi hui."
     )
+
+
+# =========================================================
+# PREMIUM EMOJI SEND TEST
+# =========================================================
+
+async def testemoji(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """Test whether the bot can SEND custom emojis in the owner's private chat. This deliberately tests the Bot API permission separately from channel posts. If the owner has Telegram Premium and the IDs are valid, Telegram should render the custom emojis instead of the fallback Unicode characters. """
+    user_id = update.effective_user.id if update.effective_user else None
+
+    if not is_owner_user(user_id):
+        if update.message:
+            await update.message.reply_text(
+                "⛔ Only the configured bot owner can run this test."
+            )
+        return
+
+    if update.effective_chat and update.effective_chat.type != "private":
+        await update.message.reply_text(
+            "⚠️ Open the bot in private chat and run /testemoji there."
+        )
+        return
+
+    test_text = (
+        "🧪 <b>KOLPulse Premium Emoji Test</b>\n\n"
+        f'{tg_custom_emoji(PREMIUM_CALL_EMOJI_ID, "🔎")} CALL\n'
+        f'{tg_custom_emoji(PREMIUM_KOL_EMOJI_ID, "🎤")} KOL\n'
+        f'{tg_custom_emoji(PREMIUM_CA_EMOJI_ID, "📋")} CA\n'
+        f'{tg_custom_emoji(PREMIUM_BOT_EMOJI_ID, "🤖")} BOT\n\n'
+        "If these appear as the custom Premium artwork, the owner Premium permission is working in private chat.\n"
+        "If they appear as normal 🔎🎤📋🤖, Telegram did not apply the custom emoji entities."
+    )
+
+    try:
+        await context.bot.send_message(
+            chat_id=user_id,
+            text=test_text,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
+    except Exception as error:
+        await update.message.reply_text(
+            "❌ Premium emoji test failed.\n\n"
+            f"<code>{html.escape(type(error).__name__ + ': ' + str(error))}</code>",
+            parse_mode="HTML",
+        )
 
 
 # =========================================================
@@ -5625,6 +5670,14 @@ def main():
         CommandHandler(
             "setmilestone",
             setmilestone
+        )
+    )
+
+    # Owner-only private Premium custom emoji send test.
+    app.add_handler(
+        CommandHandler(
+            "testemoji",
+            testemoji
         )
     )
 
