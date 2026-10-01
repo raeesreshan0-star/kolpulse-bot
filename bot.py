@@ -4565,7 +4565,7 @@ async def premium_emoji_id_handler(update, context):
     user = update.effective_user
 
     if not message or not user or user.id != PREMIUM_EMOJI_USER_ID:
-        return
+        return False
 
     for entity in (message.entities or []):
         if getattr(entity, "type", None) == "custom_emoji":
@@ -4576,11 +4576,9 @@ async def premium_emoji_id_handler(update, context):
                     f"<code>{html.escape(str(emoji_id))}</code>",
                     parse_mode="HTML",
                 )
-                return
+                return True
 
-    await message.reply_text(
-        "⚠️ Is message mein Premium Custom Emoji detect nahi hui."
-    )
+    return False
 
 
 # =========================================================
@@ -5617,14 +5615,6 @@ def main():
         )
     )
 
-    app.add_handler(
-        MessageHandler(
-            filters.ChatType.PRIVATE & ~filters.COMMAND,
-            premium_emoji_id_handler,
-        ),
-        group=-10,
-    )
-
     # IMPORTANT: use TypeHandler for channel_post updates.
     # This is more reliable than MessageHandler(UpdateType.CHANNEL_POST)
     # across python-telegram-bot versions and guarantees that the
@@ -5651,11 +5641,23 @@ def main():
         )
     )
 
+    async def _private_text_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
+        # First, consume a custom-emoji message only when it is actually
+        # a Premium Emoji ID lookup request from the configured Premium account.
+        handled = await premium_emoji_id_handler(update, context)
+        if handled:
+            return
+
+        # Otherwise pass the exact same private text to the normal KOLPulse
+        # flow, including Track My Channel / Search KOL.
+        await channel_message(update, context)
+
     app.add_handler(
         MessageHandler(
-            filters.TEXT & ~filters.COMMAND,
-            channel_message,
-        )
+            filters.ChatType.PRIVATE & filters.TEXT & ~filters.COMMAND,
+            _private_text_router,
+        ),
+        group=0,
     )
 
     print(
@@ -5695,4 +5697,4 @@ def main():
 
 if __name__ == "__main__":
 
-    main()  
+    main() 
