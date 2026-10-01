@@ -643,7 +643,6 @@ async def channel_message( update: Update, context: ContextTypes.DEFAULT_TYPE ):
             "channel status.\n\n"
             "Please try again.",
 
-            reply_markup=main_menu(),
         )
 
         return
@@ -665,7 +664,6 @@ async def channel_message( update: Update, context: ContextTypes.DEFAULT_TYPE ):
 
             "🔎 New calls can already be tracked.",
 
-            reply_markup=main_menu(),
         )
 
         return
@@ -687,7 +685,6 @@ async def channel_message( update: Update, context: ContextTypes.DEFAULT_TYPE ):
 
             "Please wait for the admin decision.",
 
-            reply_markup=main_menu(),
         )
 
         return
@@ -730,8 +727,7 @@ async def channel_message( update: Update, context: ContextTypes.DEFAULT_TYPE ):
                 "Your tracking request is already "
                 "waiting for admin approval.",
 
-                reply_markup=main_menu(),
-            )
+                )
 
             return
 
@@ -749,7 +745,6 @@ async def channel_message( update: Update, context: ContextTypes.DEFAULT_TYPE ):
 
             "Please try again.",
 
-            reply_markup=main_menu(),
         )
 
         return
@@ -869,7 +864,6 @@ async def channel_message( update: Update, context: ContextTypes.DEFAULT_TYPE ):
 
         confirmation,
 
-        reply_markup=main_menu(),
     )
 
 
@@ -1052,7 +1046,8 @@ async def show_project_profile(update, project_key):
         await update.message.reply_text(
             "❌ Project data not found.\n\n"
             "This project may not have any tracked calls yet.",
-            reply_markup=main_menu(),
+            parse_mode="HTML",
+            disable_web_page_preview=True,
         )
         return
 
@@ -1073,10 +1068,19 @@ async def show_project_profile(update, project_key):
         call_mc = _safe_float(row[6])
         ath = _safe_float(row[14])
         current = _safe_float(row[7])
-        x = (ath / call_mc) if call_mc > 0 and ath > 0 else (
-            current / call_mc if call_mc > 0 and current > 0 else 0.0
+
+        x = (
+            ath / call_mc
+            if call_mc > 0 and ath > 0
+            else (
+                current / call_mc
+                if call_mc > 0 and current > 0
+                else 0.0
+            )
         )
+
         roi = (x - 1) * 100 if x > 0 else 0.0
+
         if x > best_x:
             best_x = x
             best_roi = roi
@@ -1084,30 +1088,33 @@ async def show_project_profile(update, project_key):
 
     earliest = rows[0]
     earliest_x = _safe_float(earliest[8]) if earliest[8] is not None else 0.0
+
     if _safe_float(earliest[6]) > 0 and _safe_float(earliest[14]) > 0:
-        earliest_x = _safe_float(earliest[14]) / _safe_float(earliest[6])
+        earliest_x = (
+            _safe_float(earliest[14])
+            / _safe_float(earliest[6])
+        )
 
     safe_project = html.escape(str(project_name))
     safe_contract = html.escape(str(contract or "N/A"))
 
-    summary = (
-        f"💰 <b>{safe_project}</b>\n\n"
-        f"CA: <code>{safe_contract}</code>\n\n"
-        f"🚀 ATH: <b>{format_market_cap(ath_mc)}</b>\n\n"
-        f"👑 Earliest Call: {html.escape(str(earliest[1] or 'N/A'))} "
-        f"({earliest_x:.2f}x)\n"
-        f"👑 Highest Return: "
-        f"{html.escape(str(best_row[1] if best_row else 'N/A'))} "
-        f"({best_x:.2f}x)\n"
-        f"👑 Highest Impact: <b>{best_roi:.1f}%</b>\n\n"
-        f"<b>Total Calls Detected: {total_calls}</b>\n"
-    )
+    parts = [
+        (
+            f"💰 <b>{safe_project}</b>\n\n"
+            f"CA: <code>{safe_contract}</code>\n\n"
+            f"🚀 ATH: <b>{format_market_cap(ath_mc)}</b>\n\n"
+            f"👑 Earliest Call: "
+            f"{html.escape(str(earliest[1] or 'N/A'))} "
+            f"({earliest_x:.2f}x)\n"
+            f"👑 Highest Return: "
+            f"{html.escape(str(best_row[1] if best_row else 'N/A'))} "
+            f"({best_x:.2f}x)\n"
+            f"👑 Highest Impact: <b>{best_roi:.1f}%</b>\n\n"
+            f"<b>Total Calls Detected: {total_calls}</b>\n\n"
+        )
+    ]
 
-    await update.message.reply_text(
-        summary,
-        parse_mode="HTML",
-        disable_web_page_preview=True,
-    )
+    buttons = []
 
     for index, row in enumerate(rows, 1):
 
@@ -1136,7 +1143,11 @@ async def show_project_profile(update, project_key):
         current_x = (
             current_mc_f / call_mc_f
             if call_mc_f > 0 and current_mc_f > 0
-            else (_safe_float(multiplier) if multiplier is not None else 0.0)
+            else (
+                _safe_float(multiplier)
+                if multiplier is not None
+                else 0.0
+            )
         )
 
         ath_x = (
@@ -1148,28 +1159,37 @@ async def show_project_profile(update, project_key):
         if ath_x <= 0:
             ath_x = current_x
 
-        impact = max((ath_x - 1) * 100, 0.0) if ath_x > 0 else 0.0
+        impact = (
+            max((ath_x - 1) * 100, 0.0)
+            if ath_x > 0
+            else 0.0
+        )
         profit = 100 * current_x if current_x > 0 else 100
 
         safe_kol = html.escape(str(kol_username or "N/A"))
-        safe_time = html.escape(str(call_time or created_at or "N/A"))
+        safe_time = html.escape(
+            str(call_time or created_at or "N/A")
+        )
         safe_chain = html.escape(str(chain or "N/A"))
 
-        block = (
-            f"<b>{index}. {safe_kol}</b>\n\n"
-            f"Multiplier: <b>{current_x:.2f}x</b>\n"
-            f"Called MC: <b>{format_market_cap(call_mc_f)}</b>\n"
-            f"Price Impact: <b>{impact:.0f}%</b>\n"
-            f"Profit: <b>$100 = ${profit:.0f}</b>\n"
-            f"ATH: <b>{format_market_cap(ath_mc_f)}</b> / <b>{ath_x:.2f}x</b>\n"
-            f"Chain: <b>{safe_chain}</b>\n"
-            f"Time: {safe_time}\n"
+        parts.append(
+            (
+                f"<b>{index}. {safe_kol}</b>\n\n"
+                f"Multiplier: <b>{current_x:.2f}x</b>\n"
+                f"Called MC: <b>{format_market_cap(call_mc_f)}</b>\n"
+                f"Price Impact: <b>{impact:.0f}%</b>\n"
+                f"Profit: <b>$100 = ${profit:.0f}</b>\n"
+                f"ATH: <b>{format_market_cap(ath_mc_f)}</b> / "
+                f"<b>{ath_x:.2f}x</b>\n"
+                f"Chain: <b>{safe_chain}</b>\n"
+                f"Time: {safe_time}\n"
+            )
         )
 
-        buttons = []
+        row_buttons = []
 
         if original_call_link:
-            buttons.append(
+            row_buttons.append(
                 InlineKeyboardButton(
                     "🔎 View Call",
                     url=str(original_call_link),
@@ -1177,35 +1197,62 @@ async def show_project_profile(update, project_key):
             )
 
         if kol_username:
-            kol_url = (
-                f"{BOT_LINK}?start=kol_"
-                f"{html.escape(str(kol_username).lstrip('@'), quote=True)}"
-            )
-            buttons.append(
+            row_buttons.append(
                 InlineKeyboardButton(
                     "💍 KOL Stats",
-                    url=kol_url,
+                    url=(
+                        f"{BOT_LINK}?start=kol_"
+                        f"{html.escape(str(kol_username).lstrip('@'), quote=True)}"
+                    ),
                 )
             )
 
+        if row_buttons:
+            buttons.append(row_buttons)
+
+        if index != len(rows):
+            parts.append("\n───────────────────────\n")
+
+    text = "".join(parts)
+
+    # Keep the profile on one Telegram page/message whenever possible.
+    # If a very large project exceeds Telegram's limit, split safely.
+    if len(text) <= 3900:
         await update.message.reply_text(
-            block,
+            text,
             parse_mode="HTML",
             disable_web_page_preview=True,
-            reply_markup=(
-                InlineKeyboardMarkup([buttons])
-                if buttons else None
-            ),
+            reply_markup=InlineKeyboardMarkup(buttons) if buttons else None,
         )
+    else:
+        # Large projects: preserve the same data and buttons in compact chunks.
+        current = ""
+        chunk_index = 0
 
-    await update.message.reply_text(
-        "───────────────────────\n"
-        "📌 Tap <b>View Call</b> to open the original promoted post, "
-        "or <b>KOL Stats</b> to view the channel's complete tracked performance.",
-        parse_mode="HTML",
-        disable_web_page_preview=True,
-        reply_markup=main_menu(),
-    )
+        for part in parts:
+            if current and len(current) + len(part) > 3900:
+                markup = None
+                if chunk_index == len(parts) - 1 and buttons:
+                    markup = InlineKeyboardMarkup(buttons)
+
+                await update.message.reply_text(
+                    current,
+                    parse_mode="HTML",
+                    disable_web_page_preview=True,
+                    reply_markup=markup,
+                )
+                current = ""
+
+            current += part
+            chunk_index += 1
+
+        if current:
+            await update.message.reply_text(
+                current,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+                reply_markup=InlineKeyboardMarkup(buttons) if buttons else None,
+            )
 
 
 async def show_kol_profile(update, channel):
@@ -1220,7 +1267,6 @@ async def show_kol_profile(update, channel):
             "No tracked calls found for this KOL yet.",
             parse_mode="HTML",
             disable_web_page_preview=True,
-            reply_markup=main_menu(),
         )
         return
 
@@ -1256,15 +1302,10 @@ async def show_kol_profile(update, channel):
 
         if ath_x > 0:
             ath_values.append(ath_x)
-            if ath_x >= 2:
-                hit_2x += 1
-            if ath_x >= 10:
-                hit_10x += 1
-            if ath_x >= 100:
-                hit_100x += 1
-            if ath_x >= 1000:
-                hit_1000x += 1
-
+            if ath_x >= 2: hit_2x += 1
+            if ath_x >= 10: hit_10x += 1
+            if ath_x >= 100: hit_100x += 1
+            if ath_x >= 1000: hit_1000x += 1
             if ath_x > best_x:
                 best_x = ath_x
                 best_row = row
@@ -1272,8 +1313,6 @@ async def show_kol_profile(update, channel):
     avg_x = sum(ath_values) / len(ath_values) if ath_values else 0.0
     avg_roi = (avg_x - 1) * 100 if avg_x > 0 else 0.0
 
-    # Rank is only shown when a real ranking is available from tracked data.
-    # No artificial score is invented here.
     rank = "Unranked"
     try:
         leaderboard = get_kol_leaderboard()
@@ -1282,56 +1321,41 @@ async def show_kol_profile(update, channel):
                 rank = f"#{index}"
                 break
     except Exception:
-        rank = "Unranked"
+        pass
 
     profile_link = f"https://t.me/{channel.lstrip('@')}"
     safe_channel = html.escape(channel)
-    best_project = (
-        html.escape(str(best_row[2] or "$TOKEN"))
-        if best_row else "N/A"
-    )
+    best_project = html.escape(str(best_row[2] or "$TOKEN")) if best_row else "N/A"
 
-    summary = (
-        "💍 <b>KOLscope STATS</b>\n\n"
-        f'Channel: <a href="{profile_link}">{safe_channel}</a>\n'
-        f"Rank: {rank}\n\n"
-        "<b>KOL SCORE: Not calculated</b>\n"
-        "⚪⚪⚪⚪⚪⚪⚪⚪⚪⚪\n\n"
-        f"💵 Average X Per Call: <b>{avg_x:.2f}x</b>\n"
-        f"📈 Average ATH ROI Per Call: <b>{avg_roi:.1f}%</b>\n"
-        f"👑 Best Call: <b>{best_project} / {best_x:.2f}x</b>\n"
-        f"💎 Total Calls: <b>{total_calls}</b>\n"
-        f"📁 Total Projects: <b>{len(project_keys)}</b>\n\n"
-        "<b>Last 6 Calls:</b>"
-    )
-
-    await update.message.reply_text(
-        summary,
-        parse_mode="HTML",
-        disable_web_page_preview=True,
-    )
-
-    for row in rows[:6]:
+    parts = [
         (
-            call_id,
-            kol_username,
-            project_name,
-            project_link,
-            original_call_link,
-            call_mc,
-            current_mc,
-            multiplier,
-            call_time,
-            status,
-            created_at,
-            contract,
-            chain,
-            ath_mc,
+            "💍 <b>KOLscope STATS</b>\n\n"
+            f'Channel: <a href="{profile_link}">{safe_channel}</a>\n'
+            f"Rank: {rank}\n\n"
+            "<b>KOL SCORE: Not calculated</b>\n"
+            "⚪⚪⚪⚪⚪⚪⚪⚪⚪⚪\n\n"
+            f"💵 Average X Per Call: <b>{avg_x:.2f}x</b>\n"
+            f"📈 Average ATH ROI Per Call: <b>{avg_roi:.1f}%</b>\n"
+            f"👑 Best Call: <b>{best_project} / {best_x:.2f}x</b>\n"
+            f"💎 Total Calls: <b>{total_calls}</b>\n"
+            f"📁 Total Projects: <b>{len(project_keys)}</b>\n\n"
+            "<b>Last 6 Calls:</b>\n\n"
+        )
+    ]
+
+    buttons = []
+
+    for index, row in enumerate(rows[:6], 1):
+        (
+            call_id, kol_username, project_name, project_link,
+            original_call_link, call_mc, current_mc, multiplier,
+            call_time, status, created_at, contract, chain, ath_mc,
         ) = row
 
         call_mc_f = _safe_float(call_mc)
         current_mc_f = _safe_float(current_mc)
         ath_mc_f = _safe_float(ath_mc)
+
         current_x = (
             current_mc_f / call_mc_f
             if call_mc_f > 0 and current_mc_f > 0
@@ -1349,50 +1373,65 @@ async def show_kol_profile(update, channel):
         safe_time = html.escape(str(call_time or created_at or "N/A"))
         safe_chain = html.escape(str(chain or "N/A"))
 
-        block = (
+        parts.append(
             f"💰 <b>{safe_project}</b>\n"
-            f" Multiplier: <b>{current_x:.2f}x</b>\n"
-            f" Price Impact: <b>{impact:.0f}%</b>\n"
-            f" Profit: <b>$100 = ${profit:.0f}</b>\n"
-            f" Call: <b>{format_market_cap(call_mc_f)} → {format_market_cap(ath_mc_f)}</b>\n"
-            f" Chain: <b>{safe_chain}</b>\n"
-            f" Time: {safe_time}\n"
+            f"Multiplier: <b>{current_x:.2f}x</b>\n"
+            f"Price Impact: <b>{impact:.0f}%</b>\n"
+            f"Profit: <b>$100 = ${profit:.0f}</b>\n"
+            f"Call: <b>{format_market_cap(call_mc_f)} → {format_market_cap(ath_mc_f)}</b>\n"
+            f"Chain: <b>{safe_chain}</b>\n"
+            f"Time: {safe_time}\n"
         )
 
-        buttons = []
+        row_buttons = []
         if original_call_link:
-            buttons.append(
-                InlineKeyboardButton(
-                    "🔎 View Call",
-                    url=str(original_call_link),
-                )
+            row_buttons.append(
+                InlineKeyboardButton("🔎 View Call", url=str(original_call_link))
             )
         if contract or project_name:
-            buttons.append(
+            row_buttons.append(
                 InlineKeyboardButton(
                     "💰 Project",
                     url=_project_deep_link(project_name, contract),
                 )
             )
+        if row_buttons:
+            buttons.append(row_buttons)
 
-        await update.message.reply_text(
-            block,
-            parse_mode="HTML",
-            disable_web_page_preview=True,
-            reply_markup=InlineKeyboardMarkup([buttons]) if buttons else None,
-        )
+        if index != min(6, len(rows)):
+            parts.append("\n───────────────────────\n")
 
-    await update.message.reply_text(
-        "───────────────────────\n"
+    parts.append(
+        "\n───────────────────────\n"
         f"┌🎯 Amount of 2x Hits: {hit_2x}\n"
         f"├🎯 Amount of 10x Hits: {hit_10x}\n"
         f"├🎯 Amount of 100x Hits: {hit_100x}\n"
         f"└🎯 Amount of 1000x Hits: {hit_1000x}\n"
-        "───────────────────────",
-        parse_mode="HTML",
-        disable_web_page_preview=True,
-        reply_markup=main_menu(),
+        "───────────────────────"
     )
+
+    text = "".join(parts)
+
+    if len(text) <= 3900:
+        await update.message.reply_text(
+            text,
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+            reply_markup=InlineKeyboardMarkup(buttons) if buttons else None,
+        )
+    else:
+        # Fallback only for unusually long profiles.
+        await update.message.reply_text(
+            text[:3900],
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+        )
+        await update.message.reply_text(
+            text[3900:],
+            parse_mode="HTML",
+            disable_web_page_preview=True,
+            reply_markup=InlineKeyboardMarkup(buttons) if buttons else None,
+        )
 
 
 async def start( update: Update, context: ContextTypes.DEFAULT_TYPE ):
@@ -2142,6 +2181,91 @@ def is_verified_channel(channel):
 # =========================================================
 # LIVE DEXSCREENER MARKET CAP
 # =========================================================
+
+def fetch_dex_chain_sync(contract):
+    """Resolve chain directly from DexScreener when the post does not state it."""
+    if not contract:
+        return None
+
+    encoded_contract = urllib.parse.quote(str(contract).strip(), safe="")
+    api_url = (
+        f"{DEX_API_BASE}/latest/dex/search"
+        f"?q={encoded_contract}"
+    )
+
+    try:
+        request = urllib.request.Request(
+            api_url,
+            headers={"User-Agent": "KOLPulse/1.0"},
+        )
+
+        with urllib.request.urlopen(request, timeout=12) as response:
+            data = json.loads(response.read().decode("utf-8"))
+
+        pairs = data.get("pairs") if isinstance(data, dict) else []
+        if not isinstance(pairs, list):
+            pairs = []
+
+        chain_map = {
+            "ethereum": "ETH",
+            "solana": "SOL",
+            "base": "BASE",
+            "bsc": "BSC",
+            "arbitrum": "ARB",
+            "polygon": "POLY",
+            "avalanche": "AVAX",
+            "optimism": "OP",
+            "zksync": "ZKSYNC",
+            "linea": "LINEA",
+            "scroll": "SCROLL",
+            "blast": "BLAST",
+            "sonic": "SONIC",
+            "monad": "MONAD",
+            "hyperevm": "HYPER",
+        }
+
+        # Prefer the pair with the strongest liquidity.
+        candidates = []
+        for pair in pairs:
+            if not isinstance(pair, dict):
+                continue
+
+            chain_id = str(pair.get("chainId") or "").strip().lower()
+            if not chain_id:
+                continue
+
+            liquidity = pair.get("liquidity") or {}
+            try:
+                liquidity_usd = float(liquidity.get("usd") or 0)
+            except Exception:
+                liquidity_usd = 0.0
+
+            candidates.append((liquidity_usd, chain_id))
+
+        candidates.sort(reverse=True)
+
+        for _, chain_id in candidates:
+            if chain_id in chain_map:
+                return chain_map[chain_id]
+
+            if chain_id:
+                return chain_id.upper()
+
+    except Exception as error:
+        print(
+            "⚠️ DexScreener chain lookup failed: "
+            f"{type(error).__name__}: {error}"
+        )
+
+    return None
+
+
+async def fetch_live_chain_symbol(contract):
+    return await asyncio.to_thread(
+        fetch_dex_chain_sync,
+        contract,
+    )
+
 
 def fetch_dex_market_cap_sync( contract, chain_symbol=None ):
 
@@ -3129,7 +3253,6 @@ async def show_kol_results( update, channel ):
             "Please verify the channel first "
             "using 📡 Track My Channel.",
 
-            reply_markup=main_menu(),
         )
 
         return
@@ -3153,7 +3276,6 @@ async def show_kol_results( update, channel ):
             "No tracked calls were found after "
             "this channel was verified.",
 
-            reply_markup=main_menu(),
         )
 
         return
@@ -3233,7 +3355,6 @@ async def show_kol_results( update, channel ):
 
         disable_web_page_preview=False,
 
-        reply_markup=main_menu(),
     )
 
 
@@ -3357,6 +3478,15 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
         text,
         contract
     )
+
+    if chain_symbol == "UNKNOWN":
+        resolved_chain = await fetch_live_chain_symbol(contract)
+        if resolved_chain:
+            chain_symbol = resolved_chain
+            print(
+                f"⛓️ Chain resolved from DexScreener: "
+                f"{chain_symbol}"
+            )
 
     print(
         f"⛓️ Chain detected: "
@@ -3994,7 +4124,6 @@ async def button_handler( update: Update, context: ContextTypes.DEFAULT_TYPE ):
             "⚡ KOLPulse Main Menu\n\n"
             "Choose an option below:",
 
-            reply_markup=main_menu(),
         )
 
         return
@@ -4419,7 +4548,6 @@ async def button_handler( update: Update, context: ContextTypes.DEFAULT_TYPE ):
 
         "⚠️ Unknown option.",
 
-        reply_markup=main_menu(),
     )
 
 
@@ -4747,4 +4875,4 @@ def main():
 
 if __name__ == "__main__":
 
-    main() 
+    main()
