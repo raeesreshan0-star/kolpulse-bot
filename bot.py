@@ -1494,6 +1494,11 @@ async def show_project_profile(update, project_key):
     )
 
     total_calls = len(rows)
+    total_channels = len({
+        normalize_channel(row[1])
+        for row in rows
+        if row[1]
+    })
     best_row = None
     best_x = 0.0
     best_roi = 0.0
@@ -1549,7 +1554,8 @@ async def show_project_profile(update, project_key):
             f"{html.escape(str(best_row[1] if best_row else 'N/A'))} "
             f"({best_x:.2f}x)\n"
             f"👑 Highest Impact: <b>{best_roi:.1f}%</b>\n\n"
-            f"<b>Total Calls Detected: {total_calls}</b>\n\n"
+            f"<b>Total Calls Detected: {total_calls}</b>\n"
+            f"<b>Total Channels Promoted: {total_channels}</b>\n\n"
         )
     ]
 
@@ -3164,61 +3170,48 @@ async def setmilestone( update: Update, context: ContextTypes.DEFAULT_TYPE ):
 
 async def send_pump_alert( context, call_id, kol_username, project_name, call_mc, current_mc, multiplier, milestone, original_call_link, kol_link, contract ):
 
-    safe_kol = html.escape(
-        kol_username or "@KOL"
-    )
+    # The X-milestone alert uses normal Unicode emojis only.
+    # Click targets:
+    # 1) @KOL -> opens the original promotion channel
+    # 2) PROJECT -> opens this project's profile inside KOLPulse
+    # 3) Call -> opens the exact original post that made the milestone
+    # 4) KOL -> opens the KOL's full stats/profile inside the bot
+    # 5) Bot -> opens KOLPulse
 
-    safe_project = html.escape(
-        project_name or "$TOKEN"
-    )
+    channel_username = str(kol_username or "@KOL").strip()
+    if not channel_username.startswith("@"):
+        channel_username = "@" + channel_username
 
-    safe_contract = html.escape(
-        contract or "N/A"
-    )
+    safe_kol = html.escape(channel_username)
+    safe_project = html.escape(str(project_name or "$TOKEN"))
+    safe_contract = html.escape(str(contract or "N/A"))
 
-    call_mc_text = format_market_cap(
-        call_mc
-    )
+    # Real Telegram promotion channel link.
+    promo_channel_url = "https://t.me/" + channel_username.lstrip("@")
 
-    current_mc_text = format_market_cap(
-        current_mc
-    )
+    # Project profile and KOL profile are bot deep-links.
+    project_url = _project_deep_link(project_name, contract)
+    kol_start = urllib.parse.quote(channel_username.lstrip("@"), safe="")
+    kol_profile_url = f"{BOT_LINK}?start=kol_{kol_start}"
+
+    safe_promo_url = html.escape(promo_channel_url, quote=True)
+    safe_project_url = html.escape(project_url, quote=True)
+    safe_kol_profile_url = html.escape(kol_profile_url, quote=True)
+    safe_call_url = html.escape(str(original_call_link or ""), quote=True)
+    safe_bot_url = html.escape(BOT_LINK, quote=True)
+
+    call_mc_text = format_market_cap(call_mc)
+    current_mc_text = format_market_cap(current_mc)
 
     alert_text = (
-
-        f"🚀 <b>{milestone}X PUMP HIT!</b>\n\n"
-
-        f"🔮 <b>{safe_project}</b>\n"
-
-        f"👤 KOL: "
-        f"<a href=\"{kol_link}\">"
-        f"{safe_kol}"
-        f"</a>\n\n"
-
-        f"💰 Call MC: "
-        f"{call_mc_text}\n"
-
-        f"📈 Current MC: "
-        f"{current_mc_text}\n"
-
-        f"🚀 Performance: "
-        f"<b>{multiplier:.2f}X</b>\n\n"
-
-        f"CA: <code>"
-        f"{safe_contract}"
-        f"</code>\n\n"
-
-        f"🔎 <a href=\"{original_call_link}\">"
-        f"CALL"
-        f"</a> "
-
-        f"👤 <a href=\"{kol_link}\">"
-        f"KOL"
-        f"</a> "
-
-        f"🤖 <a href=\"{BOT_LINK}\">"
-        f"BOT"
-        f"</a>"
+        f"🟪 <b>MULTIPLIER DETECTED: {milestone}x+</b>\n\n"
+        f'<a href="{safe_promo_url}">{safe_kol}</a> '
+        f"made {milestone}x+ on "
+        f'<a href="{safe_project_url}"><b>{safe_project}</b></a>.\n\n'
+        f"{call_mc_text} ⮕ {current_mc_text}\n\n"
+        f'<a href="{safe_call_url}">🔎 Call❕</a> '
+        f'<a href="{safe_kol_profile_url}">💍 KOL❕</a> '
+        f'<a href="{safe_bot_url}">✨ Bot</a>'
     )
 
     try:
@@ -3253,8 +3246,6 @@ async def send_pump_alert( context, call_id, kol_username, project_name, call_mc
 
         else:
 
-            # No dedicated milestone video has been saved yet.
-            # Keep the existing text-only fallback.
             await context.bot.send_message(
                 chat_id=LIVE_CHANNEL,
                 text=alert_text,
@@ -4569,12 +4560,7 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
 # PREMIUM EMOJI ID COLLECTOR
 # =========================================================
 
-# Keep the Premium emoji collector tied to the SAME configured bot owner.
-# OWNER_USER_ID should be set in the GitHub Actions / hosting secrets.
-try:
-    PREMIUM_EMOJI_USER_ID = int(OWNER_USER_ID) if str(OWNER_USER_ID).strip().isdigit() else 0
-except Exception:
-    PREMIUM_EMOJI_USER_ID = 0
+PREMIUM_EMOJI_USER_ID = 8260087850
 
 async def premium_emoji_id_handler(update, context):
     message = update.effective_message
@@ -4597,52 +4583,6 @@ async def premium_emoji_id_handler(update, context):
     await message.reply_text(
         "⚠️ Is message mein Premium Custom Emoji detect nahi hui."
     )
-
-
-# =========================================================
-# PREMIUM EMOJI SEND TEST
-# =========================================================
-
-async def testemoji(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    """Test whether the bot can SEND custom emojis in the owner's private chat. This deliberately tests the Bot API permission separately from channel posts. If the owner has Telegram Premium and the IDs are valid, Telegram should render the custom emojis instead of the fallback Unicode characters. """
-    user_id = update.effective_user.id if update.effective_user else None
-
-    if not is_owner_user(user_id):
-        if update.message:
-            await update.message.reply_text(
-                "⛔ Only the configured bot owner can run this test."
-            )
-        return
-
-    if update.effective_chat and update.effective_chat.type != "private":
-        await update.message.reply_text(
-            "⚠️ Open the bot in private chat and run /testemoji there."
-        )
-        return
-
-    test_text = (
-        "🧪 <b>KOLPulse Premium Emoji Test</b>\n\n"
-        f'{tg_custom_emoji(PREMIUM_CALL_EMOJI_ID, "🔎")} CALL\n'
-        f'{tg_custom_emoji(PREMIUM_KOL_EMOJI_ID, "🎤")} KOL\n'
-        f'{tg_custom_emoji(PREMIUM_CA_EMOJI_ID, "📋")} CA\n'
-        f'{tg_custom_emoji(PREMIUM_BOT_EMOJI_ID, "🤖")} BOT\n\n'
-        "If these appear as the custom Premium artwork, the owner Premium permission is working in private chat.\n"
-        "If they appear as normal 🔎🎤📋🤖, Telegram did not apply the custom emoji entities."
-    )
-
-    try:
-        await context.bot.send_message(
-            chat_id=user_id,
-            text=test_text,
-            parse_mode="HTML",
-            disable_web_page_preview=True,
-        )
-    except Exception as error:
-        await update.message.reply_text(
-            "❌ Premium emoji test failed.\n\n"
-            f"<code>{html.escape(type(error).__name__ + ': ' + str(error))}</code>",
-            parse_mode="HTML",
-        )
 
 
 # =========================================================
@@ -5670,14 +5610,6 @@ def main():
         CommandHandler(
             "setmilestone",
             setmilestone
-        )
-    )
-
-    # Owner-only private Premium custom emoji send test.
-    app.add_handler(
-        CommandHandler(
-            "testemoji",
-            testemoji
         )
     )
 
