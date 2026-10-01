@@ -6,6 +6,10 @@ on:
     branches:
       - main
 
+concurrency:
+  group: kolpulse-bot
+  cancel-in-progress: true
+
 jobs:
   run-bot:
     runs-on: ubuntu-latest
