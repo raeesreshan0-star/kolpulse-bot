@@ -19,7 +19,6 @@ from telegram.ext import (
     CommandHandler,
     CallbackQueryHandler,
     MessageHandler,
-    TypeHandler,
     ContextTypes,
     filters,
 )
@@ -63,41 +62,6 @@ TOP_KOLS_LIMIT = 3
 # Minimum X milestone that should trigger a pump alert.
 # Can be changed at runtime with: /setmilestone 2
 MIN_PUMP_MILESTONE = 2
-
-# =========================================================
-# KOLPulseLive PREMIUM CUSTOM EMOJIS
-# =========================================================
-PREMIUM_CALL_EMOJI_ID = "6044119257308995249"
-PREMIUM_KOL_EMOJI_ID = "6217412791041528130"
-PREMIUM_HIT_2X_EMOJI_ID = "6221788387758578190"
-
-# Network emoji IDs supplied by the owner, in the same order supplied:
-# SOL, BASE, BSC, ETH, ARB, POLY, AVAX, OP, ZKSYNC, LINEA, RH.
-PREMIUM_CHAIN_EMOJI_MAP = {
-    "SOL": "6193007360936517935",
-    "BASE": "6195135444217243497",
-    "BSC": "6192827165583614102",
-    "ETH": "6192830412578890176",
-    "ARB": "6192715303160390844",
-    "POLY": "6192651621680292239",
-    "AVAX": "5258477770735885832",
-    "OP": "5244555445267367519",
-    "ZKSYNC": "6192905389822978354",
-    "LINEA": "6192617648488980644",
-    "RH": "5258093637450866522",
-}
-
-def tg_custom_emoji(emoji_id, fallback="🔹"):
-    return (
-        f'<tg-emoji emoji-id="{html.escape(str(emoji_id), quote=True)}">'
-        f'{fallback}</tg-emoji>'
-    )
-
-def chain_custom_emoji(chain_symbol):
-    chain = str(chain_symbol or "").strip().upper()
-    emoji_id = PREMIUM_CHAIN_EMOJI_MAP.get(chain)
-    return tg_custom_emoji(emoji_id, "⛓️") if emoji_id else "⛓️"
-
 
 
 # =========================================================
@@ -930,20 +894,20 @@ def update_request_status( channel, status ):
 
 
 async def channel_message( update: Update, context: ContextTypes.DEFAULT_TYPE ):
-    # Use whichever private message Telegram supplied.
-    # Fresh messages -> update.message
-    # Edited messages -> update.edited_message
-    message = update.message or update.edited_message
 
-    if not message or not message.text:
+    if not update.message:
+
         return
 
-    # Telegram Message.text is read-only. Never assign to message.text.
-    # Keep the cleaned text in a separate variable.
-    message_text = message.text.strip()
+    if not update.message.text:
 
-    print(f"📡 TRACK CHANNEL INPUT RECEIVED: {message_text}")
-# -----------------------------------------------------
+        return
+
+    message_text = (
+        update.message.text.strip()
+    )
+
+    # -----------------------------------------------------
     # SEARCH KOL
     # -----------------------------------------------------
 
@@ -1008,7 +972,7 @@ async def channel_message( update: Update, context: ContextTypes.DEFAULT_TYPE ):
             "waiting_for_channel"
         ] = True
 
-        await message.reply_text(
+        await update.message.reply_text(
 
             "❌ Bot Is Not Admin Yet\n\n"
 
@@ -1070,7 +1034,7 @@ async def channel_message( update: Update, context: ContextTypes.DEFAULT_TYPE ):
             f"{type(error).__name__}: {error}"
         )
 
-        await message.reply_text(
+        await update.message.reply_text(
 
             "⚠️ Could not check your "
             "channel status.\n\n"
@@ -1086,7 +1050,7 @@ async def channel_message( update: Update, context: ContextTypes.DEFAULT_TYPE ):
 
     if status == "approved":
 
-        await message.reply_text(
+        await update.message.reply_text(
 
             "✅ Channel Already Approved!\n\n"
 
@@ -1107,7 +1071,7 @@ async def channel_message( update: Update, context: ContextTypes.DEFAULT_TYPE ):
 
     if status == "pending":
 
-        await message.reply_text(
+        await update.message.reply_text(
 
             "⏳ Channel Already Pending!\n\n"
 
@@ -1151,7 +1115,7 @@ async def channel_message( update: Update, context: ContextTypes.DEFAULT_TYPE ):
 
         if not created:
 
-            await message.reply_text(
+            await update.message.reply_text(
 
                 "⏳ Channel Already Pending!\n\n"
 
@@ -1171,7 +1135,7 @@ async def channel_message( update: Update, context: ContextTypes.DEFAULT_TYPE ):
             f"{type(error).__name__}: {error}"
         )
 
-        await message.reply_text(
+        await update.message.reply_text(
 
             "⚠️ Could not create your "
             "tracking request.\n\n"
@@ -1293,7 +1257,7 @@ async def channel_message( update: Update, context: ContextTypes.DEFAULT_TYPE ):
             "Please contact support."
         )
 
-    await message.reply_text(
+    await update.message.reply_text(
 
         confirmation,
 
@@ -1531,14 +1495,9 @@ async def show_project_profile(update, project_key):
     safe_project = html.escape(str(project_name))
     safe_contract = html.escape(str(contract or "N/A"))
 
-    project_deep_link = html.escape(
-        _project_deep_link(project_name, contract),
-        quote=True,
-    )
-
     parts = [
         (
-            f'<a href="{project_deep_link}"><b>{safe_project}</b></a>\n\n'
+            f"💰 <b>{safe_project}</b>\n\n"
             f"CA: <code>{safe_contract}</code>\n\n"
             f"🚀 ATH: <b>{format_market_cap(ath_mc)}</b>\n\n"
             f"👑 Earliest Call: "
@@ -1629,7 +1588,7 @@ async def show_project_profile(update, project_key):
         if original_call_link:
             safe_call_url = html.escape(str(original_call_link), quote=True)
             inline_links.append(
-                f'<a href="{safe_call_url}">{tg_custom_emoji(PREMIUM_CALL_EMOJI_ID, "🔎")} View Call</a>'
+                f'<a href="{safe_call_url}">🔎 View Call</a>'
             )
 
         if kol_username:
@@ -1640,7 +1599,7 @@ async def show_project_profile(update, project_key):
             kol_url = f"{BOT_LINK}?start=kol_{kol_start}"
             safe_kol_url = html.escape(kol_url, quote=True)
             inline_links.append(
-                f'<a href="{safe_kol_url}">{tg_custom_emoji(PREMIUM_KOL_EMOJI_ID, "🎤")} KOL Stats</a>'
+                f'<a href="{safe_kol_url}">💍 KOL Stats</a>'
             )
 
         if inline_links:
@@ -1846,32 +1805,32 @@ async def show_kol_profile(update, channel):
 
 async def start( update: Update, context: ContextTypes.DEFAULT_TYPE ):
 
-    # A private /start from a Telegram admin registers that user
-    # as the recipient for automatic call-video requests.
+    # PRIVATE OWNER REGISTRATION
+    # OWNER_USER_ID is the source of truth. The owner does NOT need to
+    # be an admin of GROUP_CHAT_ID just to register for video requests.
     if (
         update.effective_chat
         and update.effective_chat.type == "private"
         and update.effective_user
-        and GROUP_CHAT_ID
+        and is_owner_user(update.effective_user.id)
     ):
 
         try:
-
-            member = await context.bot.get_chat_member(
-                chat_id=int(GROUP_CHAT_ID),
-                user_id=update.effective_user.id,
+            register_video_request_owner(
+                update.effective_user.id
             )
 
-            if member.status in ["administrator", "creator"] and is_owner_user(update.effective_user.id):
+            print(
+                "🎥 Configured OWNER_USER_ID registered as video request owner: "
+                f"{update.effective_user.id}"
+            )
 
-                register_video_request_owner(
-                    update.effective_user.id
-                )
-
-                print(
-                    "🎥 Configured owner registered as video request owner: "
-                    f"{update.effective_user.id}"
-                )
+            # Keep the owner informed that registration succeeded.
+            await update.message.reply_text(
+                "✅ Owner verified.\n\n"
+                "🎥 Promotional video requests are now enabled.\n"
+                "Send /start once, then KOLPulse will request the promotional video privately when a new call is detected."
+            )
 
         except Exception as error:
 
@@ -4406,43 +4365,39 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
             call_mc
         )
 
-        chain_emoji = chain_custom_emoji(chain_symbol)
-        project_url = html.escape(
-            _project_deep_link(project_name, contract),
-            quote=True,
-        )
-        kol_url = html.escape(
-            f'{BOT_LINK}?start=kol_{channel.lstrip("@")}',
-            quote=True,
-        )
-        call_url = html.escape(original_call_link, quote=True)
-        bot_url = html.escape(BOT_LINK, quote=True)
-
         alert_text = (
-            f'{chain_emoji} <b>CALL ALERT:</b> '
-            f'<a href="{project_url}">'
-            f'{html.escape(str(project_name or "$TOKEN"))}</a>\n\n'
 
-            f'{chain_emoji} '
-            f'<a href="{project_url}">{safe_token}</a>\n'
-            f'💰 <b>Call MC:</b> {mc_display}\n'
-            f'⛓️ <b>Chain:</b> {safe_chain}\n\n'
+            f'🔮 <a href="{kol_link}">'
+            f'{safe_channel}</a> '
+            f'Dropped a Call 🔮\n\n'
+
+            f"🔮 Token Symbol 🔮 "
+            f'<a href="{html.escape(_project_deep_link(project_name, contract), quote=True)}">'
+            f"{safe_token}</a>\n"
+
+            f"🔮 Call MC 🔮 "
+            f"{mc_display}\n"
+
+            f"🔮 Chain Symbol 🔮 "
+            f"{safe_chain}\n\n"
 
             "We've started tracking it and "
             "will send performance alerts "
             "when new X milestones are reached.\n\n"
 
-            f'CA: <code>{safe_contract}</code>\n\n'
+            f"CA: <code>"
+            f"{safe_contract}"
+            f"</code>\n\n"
 
-            f'<a href="{call_url}">'
-            f'{tg_custom_emoji(PREMIUM_CALL_EMOJI_ID, "🔎")} CALL</a> '
+            f'🔮 <a href="{original_call_link}">'
+            f'CALL</a> '
 
-            f'<a href="{kol_url}">'
-            f'{tg_custom_emoji(PREMIUM_KOL_EMOJI_ID, "🎤")} KOL</a> '
+            f'🔮 <a href="{BOT_LINK}?start=kol_{html.escape(channel.lstrip("@"), quote=True)}">'
+            f'KOL</a> '
 
-            f'<a href="{bot_url}">🤖 BOT</a>'
+            f'🔮 <a href="{BOT_LINK}">'
+            f'BOT</a>'
         )
-
 
         # =================================================
         # REUSE ONE PROMOTIONAL VIDEO
@@ -4547,34 +4502,6 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
     print(
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
     )
-
-
-
-# =========================================================
-# PREMIUM EMOJI ID COLLECTOR
-# =========================================================
-
-PREMIUM_EMOJI_USER_ID = 8260087850
-
-async def premium_emoji_id_handler(update, context):
-    message = update.effective_message
-    user = update.effective_user
-
-    if not message or not user or user.id != PREMIUM_EMOJI_USER_ID:
-        return False
-
-    for entity in (message.entities or []):
-        if getattr(entity, "type", None) == "custom_emoji":
-            emoji_id = getattr(entity, "custom_emoji_id", None)
-            if emoji_id:
-                await message.reply_text(
-                    "✅ Premium Emoji ID found:\n\n"
-                    f"<code>{html.escape(str(emoji_id))}</code>",
-                    parse_mode="HTML",
-                )
-                return True
-
-    return False
 
 
 # =========================================================
@@ -5611,23 +5538,11 @@ def main():
         )
     )
 
-    # IMPORTANT: use TypeHandler for channel_post updates.
-    # This is more reliable than MessageHandler(UpdateType.CHANNEL_POST)
-    # across python-telegram-bot versions and guarantees that the
-    # channel_post field is routed to our detector.
-    async def _channel_post_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        if update.channel_post:
-            await channel_post_handler(update, context)
-
-    # Only actual channel_post updates are routed here.
-    # Private messages must continue to the normal MessageHandler /
-    # Track My Channel conversation handlers.
     app.add_handler(
-        TypeHandler(
-            Update,
-            _channel_post_router,
-        ),
-        group=-20,
+        MessageHandler(
+            filters.UpdateType.CHANNEL_POST,
+            channel_post_handler,
+        )
     )
 
     app.add_handler(
@@ -5637,44 +5552,11 @@ def main():
         )
     )
 
-    async def _private_update_router(update: Update, context: ContextTypes.DEFAULT_TYPE):
-        # Handle BOTH normal and edited private text updates.
-        # Using TypeHandler here avoids any filter/handler-order issue
-        # with Track My Channel usernames.
-        message = update.message or update.edited_message
-
-        if not message:
-            return
-
-        if message.chat.type != "private":
-            return
-
-        if not message.text:
-            return
-
-        if message.text.startswith("/"):
-            return
-
-        print(
-            f"📨 PRIVATE TEXT RECEIVED: {message.text} | "
-            f"waiting_for_channel={context.user_data.get('waiting_for_channel')} | "
-            f"channel_admin_check={context.user_data.get('channel_admin_check')}"
-        )
-
-        # Premium custom-emoji ID lookup.
-        handled = await premium_emoji_id_handler(update, context)
-        if handled:
-            return
-
-        # Track My Channel / Search KOL.
-        await channel_message(update, context)
-
     app.add_handler(
-        TypeHandler(
-            Update,
-            _private_update_router,
-        ),
-        group=-10,
+        MessageHandler(
+            filters.TEXT & ~filters.COMMAND,
+            channel_message,
+        )
     )
 
     print(
@@ -5685,30 +5567,8 @@ def main():
         "⏳ Polling Telegram..."
     )
 
-    print(
-        "📨 Channel-post detector: TypeHandler ENABLED"
-    )
-
-    print(
-        "📨 Telegram allowed_updates: channel_post ENABLED"
-    )
-
-    print(
-        "✏️ Edited private-message tracking ENABLED"
-    )
-
     app.run_polling(
-        drop_pending_updates=False,
-        allowed_updates=[
-            "message",
-            "edited_message",
-            "channel_post",
-            "edited_channel_post",
-            "callback_query",
-            "my_chat_member",
-            "chat_member",
-            "chat_join_request",
-        ],
+        drop_pending_updates=False
     )
 
 
