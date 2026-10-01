@@ -40,15 +40,10 @@ from database import (
 
 BOT_TOKEN = os.getenv("BOT_TOKEN", "").strip()
 GROUP_CHAT_ID = os.getenv("GROUP_CHAT_ID", "").strip()
-# Only this Telegram numeric user ID can manage milestone settings/videos.
-OWNER_USER_ID = os.getenv("OWNER_USER_ID", "").strip()
 
 LIVE_CHANNEL = "@KOLPulse_Live"
 BOT_USERNAME = "@KOLPulse_Live_bot"
 BOT_LINK = "https://t.me/KOLPulse_Live_bot"
-
-if not OWNER_USER_ID:
-    print("⚠️ OWNER_USER_ID is not configured. Owner-only settings are locked until it is set.")
 
 DEX_API_BASE = "https://api.dexscreener.com"
 
@@ -1355,7 +1350,7 @@ def get_kol_profile_rows(channel):
     try:
 
         cursor.execute(
-            """ SELECT c.id, c.kol_username, c.project_name, c.project_link, c.original_call_link, c.call_mc, c.current_mc, c.multiplier, c.call_time, c.status, c.created_at, c.contract, c.chain, c.ath_mc FROM calls c WHERE LOWER(REPLACE(c.kol_username, '@', '')) = ? AND c.id = ( SELECT MIN(c2.id) FROM calls c2 WHERE LOWER(REPLACE(c2.kol_username, '@', '')) = LOWER(REPLACE(c.kol_username, '@', '')) AND ( (NULLIF(TRIM(c.contract), '') IS NOT NULL AND LOWER(TRIM(c2.contract)) = LOWER(TRIM(c.contract))) OR (NULLIF(TRIM(c.contract), '') IS NULL AND NULLIF(TRIM(c2.contract), '') IS NULL AND LOWER(TRIM(COALESCE(c2.project_name, ''))) = LOWER(TRIM(COALESCE(c.project_name, '')))) ) ) ORDER BY c.created_at DESC, c.id DESC """,
+            """ SELECT id, kol_username, project_name, project_link, original_call_link, call_mc, current_mc, multiplier, call_time, status, created_at, contract, chain, ath_mc FROM calls WHERE LOWER(REPLACE(kol_username, '@', '')) = ? ORDER BY created_at DESC, id DESC """,
             (clean,)
         )
 
@@ -1821,14 +1816,14 @@ async def start( update: Update, context: ContextTypes.DEFAULT_TYPE ):
                 user_id=update.effective_user.id,
             )
 
-            if member.status in ["administrator", "creator"] and is_owner_user(update.effective_user.id):
+            if member.status in ["administrator", "creator"]:
 
                 register_video_request_owner(
                     update.effective_user.id
                 )
 
                 print(
-                    "🎥 Configured owner registered as video request owner: "
+                    "🎥 Video request owner registered: "
                     f"{update.effective_user.id}"
                 )
 
@@ -3011,31 +3006,12 @@ def get_pump_milestone( multiplier ):
 
 
 # =========================================================
-# OWNER ACCESS CONTROL
-# =========================================================
-def is_owner_user(user_id):
-    """Return True only for the configured owner Telegram user ID."""
-    if not user_id or not OWNER_USER_ID:
-        return False
-    return str(user_id).strip() == OWNER_USER_ID
-
-
-# =========================================================
 # SET MINIMUM PUMP MILESTONE
 # =========================================================
 
 async def setmilestone( update: Update, context: ContextTypes.DEFAULT_TYPE ):
 
     global MIN_PUMP_MILESTONE
-
-    # OWNER ONLY — never expose milestone controls to normal users.
-    user_id = update.effective_user.id if update.effective_user else None
-    if not is_owner_user(user_id):
-        if update.message:
-            await update.message.reply_text(
-                "⛔ You are not authorized to manage KOLPulse settings."
-            )
-        return
 
     # This command is intended for private bot chat.
     if update.effective_chat and update.effective_chat.type != "private":
@@ -3102,10 +3078,12 @@ async def setmilestone( update: Update, context: ContextTypes.DEFAULT_TYPE ):
     # IMPORTANT: /setmilestone controls the pump threshold only.
     # It does NOT save/replace the normal promotional-call video.
     # Instead, it asks for a dedicated video for this milestone.
-    set_pending_milestone_video_request(
-        user_id,
-        MIN_PUMP_MILESTONE
-    )
+    user_id = update.effective_user.id if update.effective_user else None
+    if user_id:
+        set_pending_milestone_video_request(
+            user_id,
+            MIN_PUMP_MILESTONE
+        )
 
     await update.message.reply_text(
         "✅ Milestone setting updated!\n\n"
@@ -3635,7 +3613,7 @@ def get_kol_leaderboard():
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(""" SELECT v.channel_username, COUNT(DISTINCT CASE WHEN c.id IS NOT NULL THEN COALESCE( NULLIF(LOWER(TRIM(c.contract)), ''), 'project:' || LOWER(TRIM(COALESCE(c.project_name, ''))) ) END) AS total_calls, COUNT(DISTINCT CASE WHEN c.multiplier >= 2 THEN COALESCE( NULLIF(LOWER(TRIM(c.contract)), ''), 'project:' || LOWER(TRIM(COALESCE(c.project_name, ''))) ) END) AS two_x_calls, MAX(c.multiplier) AS best_multiplier FROM verified_channels v LEFT JOIN calls c ON LOWER(REPLACE(c.kol_username, '@', '')) = LOWER(REPLACE(v.channel_username, '@', '')) AND c.created_at >= v.verified_at GROUP BY v.channel_username HAVING total_calls > 0 ORDER BY total_calls DESC, two_x_calls DESC, best_multiplier DESC LIMIT 10 """)
+    cursor.execute(""" SELECT v.channel_username, COUNT(c.id) AS total_calls, SUM( CASE WHEN c.multiplier >= 2 THEN 1 ELSE 0 END ) AS two_x_calls, MAX(c.multiplier) AS best_multiplier FROM verified_channels v LEFT JOIN calls c ON LOWER( REPLACE(c.kol_username, '@', '') ) = LOWER( v.channel_username ) AND c.created_at >= v.verified_at GROUP BY v.channel_username HAVING COUNT(c.id) > 0 ORDER BY total_calls DESC, two_x_calls DESC, best_multiplier DESC LIMIT 10 """)
 
     results = cursor.fetchall()
 
@@ -4213,40 +4191,6 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
         f"https://t.me/"
         f"{chat.username}"
     )
-
-    # -----------------------------------------------------
-    # DUPLICATE CALL PROTECTION
-    # -----------------------------------------------------
-    # Same KOL + same contract = same promotion. Ignore repeats.
-    # Different KOLs can still promote the same contract.
-    clean_kol = normalize_channel(channel).lstrip("@").lower()
-    clean_contract = str(contract or "").strip().lower()
-
-    if clean_kol and clean_contract:
-        try:
-            conn = get_connection()
-            cursor = conn.cursor()
-            cursor.execute(
-                """ SELECT id FROM calls WHERE LOWER(REPLACE(kol_username, '@', '')) = ? AND LOWER(TRIM(COALESCE(contract, ''))) = ? ORDER BY id ASC LIMIT 1 """,
-                (clean_kol, clean_contract),
-            )
-            duplicate_row = cursor.fetchone()
-            conn.close()
-
-            if duplicate_row:
-                print(
-                    "⏭️ DUPLICATE CALL IGNORED | "
-                    f"KOL: {channel} | "
-                    f"Contract: {contract} | "
-                    f"Existing Call ID: {duplicate_row[0]}"
-                )
-                return
-
-        except Exception as error:
-            print(
-                "⚠️ Duplicate check failed; "
-                f"continuing with call: {type(error).__name__}: {error}"
-            )
 
     # -----------------------------------------------------
     # DATABASE MC
@@ -5270,10 +5214,6 @@ async def promotional_video_handler( update: Update, context: ContextTypes.DEFAU
 
     user_id = update.effective_user.id
 
-    # OWNER ONLY — milestone videos are private owner controls.
-    if not is_owner_user(user_id):
-        return
-
     # -----------------------------------------------------
     # DEDICATED MILESTONE VIDEO
     # -----------------------------------------------------
@@ -5568,7 +5508,8 @@ def main():
     )
 
     app.run_polling(
-        drop_pending_updates=False
+        drop_pending_updates=False,
+        allowed_updates=Update.ALL_TYPES
     )
 
 
@@ -5578,4 +5519,4 @@ def main():
 
 if __name__ == "__main__":
 
-    main() 
+    main()
