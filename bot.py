@@ -47,23 +47,6 @@ LIVE_CHANNEL = "@KOLPulse_Live"
 BOT_USERNAME = "@KOLPulse_Live_bot"
 BOT_LINK = "https://t.me/KOLPulse_Live_bot"
 
-# Persistent reusable promotional video. Set this to the Telegram
-# file_id once; GitHub Actions will keep using the same video after restarts.
-PROMOTIONAL_VIDEO_FILE_ID = os.getenv("PROMOTIONAL_VIDEO_FILE_ID", "").strip()
-
-# Optional Telegram Premium custom emoji IDs. If an ID is empty, the
-# normal fallback emoji is used so the alert still works.
-PREMIUM_EMOJI_CALL = os.getenv("PREMIUM_EMOJI_CALL", "").strip()
-PREMIUM_EMOJI_PLANE = os.getenv("PREMIUM_EMOJI_PLANE", "").strip()
-PREMIUM_EMOJI_CONTRACT = os.getenv("PREMIUM_EMOJI_CONTRACT", "").strip()
-PREMIUM_EMOJI_KOL = os.getenv("PREMIUM_EMOJI_KOL", "").strip()
-PREMIUM_EMOJI_BOT = os.getenv("PREMIUM_EMOJI_BOT", "").strip()
-
-def tg_emoji(emoji_id, fallback):
-    if emoji_id:
-        return f'<tg-emoji emoji-id="{html.escape(str(emoji_id), quote=True)}">{fallback}</tg-emoji>'
-    return fallback
-
 if not OWNER_USER_ID:
     print("⚠️ OWNER_USER_ID is not configured. Owner-only settings are locked until it is set.")
 
@@ -79,6 +62,41 @@ TOP_KOLS_LIMIT = 3
 # Minimum X milestone that should trigger a pump alert.
 # Can be changed at runtime with: /setmilestone 2
 MIN_PUMP_MILESTONE = 2
+
+# =========================================================
+# KOLPulseLive PREMIUM CUSTOM EMOJIS
+# =========================================================
+PREMIUM_CALL_EMOJI_ID = "6044119257308995249"
+PREMIUM_KOL_EMOJI_ID = "6217412791041528130"
+PREMIUM_HIT_2X_EMOJI_ID = "6221788387758578190"
+
+# Network emoji IDs supplied by the owner, in the same order supplied:
+# SOL, BASE, BSC, ETH, ARB, POLY, AVAX, OP, ZKSYNC, LINEA, RH.
+PREMIUM_CHAIN_EMOJI_MAP = {
+    "SOL": "6193007360936517935",
+    "BASE": "6195135444217243497",
+    "BSC": "6192827165583614102",
+    "ETH": "6192830412578890176",
+    "ARB": "6192715303160390844",
+    "POLY": "6192651621680292239",
+    "AVAX": "5258477770735885832",
+    "OP": "5244555445267367519",
+    "ZKSYNC": "6192905389822978354",
+    "LINEA": "6192617648488980644",
+    "RH": "5258093637450866522",
+}
+
+def tg_custom_emoji(emoji_id, fallback="🔹"):
+    return (
+        f'<tg-emoji emoji-id="{html.escape(str(emoji_id), quote=True)}">'
+        f'{fallback}</tg-emoji>'
+    )
+
+def chain_custom_emoji(chain_symbol):
+    chain = str(chain_symbol or "").strip().upper()
+    emoji_id = PREMIUM_CHAIN_EMOJI_MAP.get(chain)
+    return tg_custom_emoji(emoji_id, "⛓️") if emoji_id else "⛓️"
+
 
 
 # =========================================================
@@ -561,15 +579,7 @@ def get_saved_promotional_video():
     row = cursor.fetchone()
     conn.close()
 
-    if row and row[0]:
-        return row
-
-    # GitHub Actions runners are temporary. Keep the single reusable
-    # Telegram video persistent through a repository secret instead.
-    if PROMOTIONAL_VIDEO_FILE_ID:
-        return (PROMOTIONAL_VIDEO_FILE_ID, "video")
-
-    return None
+    return row if row else None
 
 
 def save_promotional_video(file_id, video_type="video"):
@@ -1520,9 +1530,14 @@ async def show_project_profile(update, project_key):
     safe_project = html.escape(str(project_name))
     safe_contract = html.escape(str(contract or "N/A"))
 
+    project_deep_link = html.escape(
+        _project_deep_link(project_name, contract),
+        quote=True,
+    )
+
     parts = [
         (
-            f"💰 <b>{safe_project}</b>\n\n"
+            f'<a href="{project_deep_link}"><b>{safe_project}</b></a>\n\n'
             f"CA: <code>{safe_contract}</code>\n\n"
             f"🚀 ATH: <b>{format_market_cap(ath_mc)}</b>\n\n"
             f"👑 Earliest Call: "
@@ -1613,7 +1628,7 @@ async def show_project_profile(update, project_key):
         if original_call_link:
             safe_call_url = html.escape(str(original_call_link), quote=True)
             inline_links.append(
-                f'<a href="{safe_call_url}">🔎 View Call</a>'
+                f'<a href="{safe_call_url}">{tg_custom_emoji(PREMIUM_CALL_EMOJI_ID, "🔎")} View Call</a>'
             )
 
         if kol_username:
@@ -1624,7 +1639,7 @@ async def show_project_profile(update, project_key):
             kol_url = f"{BOT_LINK}?start=kol_{kol_start}"
             safe_kol_url = html.escape(kol_url, quote=True)
             inline_links.append(
-                f'<a href="{safe_kol_url}">💍 KOL Stats</a>'
+                f'<a href="{safe_kol_url}">{tg_custom_emoji(PREMIUM_KOL_EMOJI_ID, "🎤")} KOL Stats</a>'
             )
 
         if inline_links:
@@ -1830,30 +1845,32 @@ async def show_kol_profile(update, channel):
 
 async def start( update: Update, context: ContextTypes.DEFAULT_TYPE ):
 
-    # PRIVATE OWNER REGISTRATION
-    # OWNER_USER_ID is the source of truth. The owner does NOT need to
-    # be an admin of GROUP_CHAT_ID just to register for video requests.
+    # A private /start from a Telegram admin registers that user
+    # as the recipient for automatic call-video requests.
     if (
         update.effective_chat
         and update.effective_chat.type == "private"
         and update.effective_user
-        and is_owner_user(update.effective_user.id)
+        and GROUP_CHAT_ID
     ):
 
         try:
-            register_video_request_owner(
-                update.effective_user.id
+
+            member = await context.bot.get_chat_member(
+                chat_id=int(GROUP_CHAT_ID),
+                user_id=update.effective_user.id,
             )
 
-            print(
-                "🎥 Configured OWNER_USER_ID registered as video request owner: "
-                f"{update.effective_user.id}"
-            )
+            if member.status in ["administrator", "creator"] and is_owner_user(update.effective_user.id):
 
-            # /start must NEVER ask for a promotional video.
-            # Video requests are triggered only by a newly detected call
-            # when no reusable promotional video has been configured.
-            print("✅ Owner verified. /start will not request a promotional video.")
+                register_video_request_owner(
+                    update.effective_user.id
+                )
+
+                print(
+                    "🎥 Configured owner registered as video request owner: "
+                    f"{update.effective_user.id}"
+                )
 
         except Exception as error:
 
@@ -4388,22 +4405,50 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
             call_mc
         )
 
+        chain_emoji = chain_custom_emoji(chain_symbol)
+        project_url = html.escape(
+            _project_deep_link(project_name, contract),
+            quote=True,
+        )
+        kol_url = html.escape(
+            f'{BOT_LINK}?start=kol_{channel.lstrip("@")}',
+            quote=True,
+        )
+        call_url = html.escape(original_call_link, quote=True)
+        bot_url = html.escape(BOT_LINK, quote=True)
+
+        # CALL ALERT layout intentionally matches the requested Telegram design:
+        # chain premium emoji -> CALL ALERT -> KOL -> called-at-MC line ->
+        # tracking text -> CA -> premium CALL/KOL buttons -> BOT.
+        safe_kol = html.escape(
+            channel.lstrip("@")
+        )
+        safe_call_channel = html.escape(
+            channel
+        )
+
         alert_text = (
+            f'{chain_emoji} <b>CALL ALERT:</b> '
+            f'<a href="{kol_url}">{safe_kol}</a> '
+            f'{tg_custom_emoji(PREMIUM_KOL_EMOJI_ID, "🎤")}\n\n'
 
-            f'{tg_emoji(PREMIUM_EMOJI_CALL, "🟢")} <b>CALL ALERT: {html.escape(project_name)}</b> '
-            f'{tg_emoji(PREMIUM_EMOJI_PLANE, "✈️")}\n\n'
-
-            f'<a href="{kol_link}">{safe_channel}</a> just called at <b>{mc_display}</b>.\n\n'
+            f'<a href="{call_url}">{safe_call_channel}</a> '
+            f'just called at {mc_display}.\n\n'
 
             "We've started tracking it and will send performance alerts "
-            "when new X milestones are reached\n\n"
+            "when new X milestones are reached.\n\n"
 
-            f'{tg_emoji(PREMIUM_EMOJI_CONTRACT, "📄")} <code>{safe_contract}</code>\n\n'
+            f'CA: <code>{safe_contract}</code>\n\n'
 
-            f'{tg_emoji(PREMIUM_EMOJI_CALL, "🔍")} <a href="{original_call_link}">Call</a>❕'
-            f'{tg_emoji(PREMIUM_EMOJI_KOL, "🎤")} <a href="{BOT_LINK}?start=kol_{html.escape(channel.lstrip("@"), quote=True)}">KOL</a> '
-            f'{tg_emoji(PREMIUM_EMOJI_BOT, "🤖")} <a href="{BOT_LINK}">BOT</a>'
+            f'<a href="{call_url}">'
+            f'{tg_custom_emoji(PREMIUM_CALL_EMOJI_ID, "🔎")} CALL</a> '
+
+            f'<a href="{kol_url}">'
+            f'{tg_custom_emoji(PREMIUM_KOL_EMOJI_ID, "🎤")} KOL</a> '
+
+            f'<a href="{bot_url}">🤖 BOT</a>'
         )
+
 
         # =================================================
         # REUSE ONE PROMOTIONAL VIDEO
@@ -4507,6 +4552,36 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
 
     print(
         "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
+    )
+
+
+
+# =========================================================
+# PREMIUM EMOJI ID COLLECTOR
+# =========================================================
+
+PREMIUM_EMOJI_USER_ID = 8260087850
+
+async def premium_emoji_id_handler(update, context):
+    message = update.effective_message
+    user = update.effective_user
+
+    if not message or not user or user.id != PREMIUM_EMOJI_USER_ID:
+        return
+
+    for entity in (message.entities or []):
+        if getattr(entity, "type", None) == "custom_emoji":
+            emoji_id = getattr(entity, "custom_emoji_id", None)
+            if emoji_id:
+                await message.reply_text(
+                    "✅ Premium Emoji ID found:\n\n"
+                    f"<code>{html.escape(str(emoji_id))}</code>",
+                    parse_mode="HTML",
+                )
+                return
+
+    await message.reply_text(
+        "⚠️ Is message mein Premium Custom Emoji detect nahi hui."
     )
 
 
@@ -5509,11 +5584,6 @@ def main():
         "🎥 Private promotional video request system enabled."
     )
 
-    if get_saved_promotional_video():
-        print("♻️ Reusable promotional video is configured and will NOT be requested on /start.")
-    else:
-        print("⚠️ No reusable promotional video configured yet; it will be requested only when a new call is detected.")
-
     app = (
         Application
         .builder()
@@ -5551,6 +5621,14 @@ def main():
 
     app.add_handler(
         MessageHandler(
+            filters.ChatType.PRIVATE & ~filters.COMMAND,
+            premium_emoji_id_handler,
+        ),
+        group=-10,
+    )
+
+    app.add_handler(
+        MessageHandler(
             filters.UpdateType.CHANNEL_POST,
             channel_post_handler,
         )
@@ -5579,7 +5657,8 @@ def main():
     )
 
     app.run_polling(
-        drop_pending_updates=False
+        drop_pending_updates=False,
+        allowed_updates=Update.ALL_TYPES,
     )
 
 
@@ -5589,4 +5668,4 @@ def main():
 
 if __name__ == "__main__":
 
-    main() 
+    main()
