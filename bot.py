@@ -63,6 +63,35 @@ TOP_KOLS_LIMIT = 3
 # Can be changed at runtime with: /setmilestone 2
 MIN_PUMP_MILESTONE = 2
 
+# =========================================================
+# PREMIUM CUSTOM EMOJIS
+# =========================================================
+PREMIUM_CALL_EMOJI_ID = "6044119257308995249"
+PREMIUM_KOL_EMOJI_ID = "6217412791041528130"
+PREMIUM_HIT_2X_EMOJI_ID = "6221788387758578190"
+
+PREMIUM_CHAIN_EMOJI_MAP = {
+    "SOL": "6193007360936517935",
+    "BASE": "6195135444217243497",
+    "BSC": "6192827165583614102",
+    "ETH": "6192830412578890176",
+    "ARB": "6192715303160390844",
+    "POLY": "6192651621680292239",
+    "AVAX": "5258477770735885832",
+    "OP": "5244555445267367519",
+    "ZKSYNC": "6192905389822978354",
+    "LINEA": "6192617648488980644",
+    "RH": "5258093637450866522",
+}
+
+def tg_custom_emoji(emoji_id, fallback="🔮"):
+    return f'<tg-emoji emoji-id="{html.escape(str(emoji_id), quote=True)}">{fallback}</tg-emoji>'
+
+def chain_custom_emoji(chain_symbol):
+    chain = str(chain_symbol or "").strip().upper()
+    emoji_id = PREMIUM_CHAIN_EMOJI_MAP.get(chain)
+    return tg_custom_emoji(emoji_id, "⛓️") if emoji_id else "⛓️"
+
 
 # =========================================================
 # DEXSCREENER CHAIN MAP
@@ -544,7 +573,17 @@ def get_saved_promotional_video():
     row = cursor.fetchone()
     conn.close()
 
-    return row if row else None
+    if row and row[0]:
+        return row
+
+    # GitHub Actions runners are temporary, so the SQLite DB can be
+    # recreated on the next run. A GitHub secret can therefore keep
+    # the single promotional Telegram file_id persistent across restarts.
+    env_file_id = os.getenv("PROMOTIONAL_VIDEO_FILE_ID", "").strip()
+    if env_file_id:
+        return (env_file_id, "video")
+
+    return None
 
 
 def save_promotional_video(file_id, video_type="video"):
@@ -1825,12 +1864,6 @@ async def start( update: Update, context: ContextTypes.DEFAULT_TYPE ):
                 f"{update.effective_user.id}"
             )
 
-            # Keep the owner informed that registration succeeded.
-            await update.message.reply_text(
-                "✅ Owner verified.\n\n"
-                "🎥 Promotional video requests are now enabled.\n"
-                "Send /start once, then KOLPulse will request the promotional video privately when a new call is detected."
-            )
 
         except Exception as error:
 
@@ -3144,22 +3177,22 @@ async def send_pump_alert( context, call_id, kol_username, project_name, call_mc
 
     alert_text = (
 
-        f"🚀 <b>{milestone}X PUMP HIT!</b>\n\n"
+        f"{tg_custom_emoji(PREMIUM_HIT_2X_EMOJI_ID, '🚀')} <b>{milestone}X PUMP HIT!</b>\n\n"
 
-        f"🔮 <b>{safe_project}</b>\n"
+        f"{tg_custom_emoji(PREMIUM_CALL_EMOJI_ID, '🔮')} <b>{safe_project}</b>\n"
 
-        f"👤 KOL: "
+        f"{tg_custom_emoji(PREMIUM_KOL_EMOJI_ID, '👤')} KOL: "
         f"<a href=\"{kol_link}\">"
         f"{safe_kol}"
         f"</a>\n\n"
 
-        f"💰 Call MC: "
+        f"{tg_custom_emoji(PREMIUM_CALL_EMOJI_ID, '💰')} Call MC: "
         f"{call_mc_text}\n"
 
-        f"📈 Current MC: "
+        f"{tg_custom_emoji(PREMIUM_CALL_EMOJI_ID, '📈')} Current MC: "
         f"{current_mc_text}\n"
 
-        f"🚀 Performance: "
+        f"{tg_custom_emoji(PREMIUM_HIT_2X_EMOJI_ID, '🚀')} Performance: "
         f"<b>{multiplier:.2f}X</b>\n\n"
 
         f"CA: <code>"
@@ -4365,38 +4398,35 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
             call_mc
         )
 
+        call_emoji = tg_custom_emoji(PREMIUM_CALL_EMOJI_ID, "🔮")
+        kol_emoji = tg_custom_emoji(PREMIUM_KOL_EMOJI_ID, "🔮")
+        chain_emoji = chain_custom_emoji(chain_symbol)
+
         alert_text = (
 
-            f'🔮 <a href="{kol_link}">'
+            f'{call_emoji} <a href="{kol_link}">'
             f'{safe_channel}</a> '
-            f'Dropped a Call 🔮\n\n'
+            f'Dropped a Call {call_emoji}\n\n'
 
-            f"🔮 Token Symbol 🔮 "
+            f"{call_emoji} Token Symbol {call_emoji} "
             f'<a href="{html.escape(_project_deep_link(project_name, contract), quote=True)}">'
             f"{safe_token}</a>\n"
 
-            f"🔮 Call MC 🔮 "
+            f"{call_emoji} Call MC {call_emoji} "
             f"{mc_display}\n"
 
-            f"🔮 Chain Symbol 🔮 "
+            f"{chain_emoji} Chain Symbol {chain_emoji} "
             f"{safe_chain}\n\n"
 
             "We've started tracking it and "
             "will send performance alerts "
             "when new X milestones are reached.\n\n"
 
-            f"CA: <code>"
-            f"{safe_contract}"
-            f"</code>\n\n"
+            f"CA: <code>{safe_contract}</code>\n\n"
 
-            f'🔮 <a href="{original_call_link}">'
-            f'CALL</a> '
-
-            f'🔮 <a href="{BOT_LINK}?start=kol_{html.escape(channel.lstrip("@"), quote=True)}">'
-            f'KOL</a> '
-
-            f'🔮 <a href="{BOT_LINK}">'
-            f'BOT</a>'
+            f'{call_emoji} <a href="{original_call_link}">CALL</a> '
+            f'{kol_emoji} <a href="{BOT_LINK}?start=kol_{html.escape(channel.lstrip("@"), quote=True)}">KOL</a> '
+            f'{call_emoji} <a href="{BOT_LINK}">BOT</a>'
         )
 
         # =================================================
@@ -5421,6 +5451,30 @@ async def promotional_video_handler( update: Update, context: ContextTypes.DEFAU
 
 
 # =========================================================
+# OWNER VIDEO ID HELPER
+# =========================================================
+async def videoid(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.effective_user or not is_owner_user(update.effective_user.id):
+        return
+
+    saved = get_saved_promotional_video()
+    if not saved:
+        await update.message.reply_text(
+            "⚠️ No promotional video is saved yet."
+        )
+        return
+
+    file_id, video_type = saved
+    await update.message.reply_text(
+        "🎥 Promotional video file_id:\n\n"
+        f"<code>{html.escape(str(file_id))}</code>\n\n"
+        "Add this as the GitHub Actions secret <b>PROMOTIONAL_VIDEO_FILE_ID</b> "
+        "to keep the same video after every restart.",
+        parse_mode="HTML",
+    )
+
+
+# =========================================================
 # MAIN
 # =========================================================
 
@@ -5522,6 +5576,13 @@ def main():
         CommandHandler(
             "groupid",
             groupid
+        )
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "videoid",
+            videoid
         )
     )
 
