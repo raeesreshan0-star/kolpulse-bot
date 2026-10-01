@@ -141,6 +141,13 @@ def ensure_video_request_tables():
     # to be uploaded to GitHub.
     cursor.execute(""" CREATE TABLE IF NOT EXISTS saved_promotional_video ( id INTEGER PRIMARY KEY CHECK (id = 1), file_id TEXT NOT NULL, video_type TEXT NOT NULL DEFAULT 'video', created_at TEXT NOT NULL, updated_at TEXT NOT NULL ) """)
 
+    # Separate video requests for pump/milestone alerts.
+    # These are intentionally independent from the normal
+    # promotional video used for a newly detected call.
+    cursor.execute(""" CREATE TABLE IF NOT EXISTS pending_milestone_video_requests ( user_id INTEGER PRIMARY KEY, milestone INTEGER NOT NULL, created_at TEXT NOT NULL, updated_at TEXT NOT NULL ) """)
+
+    cursor.execute(""" CREATE TABLE IF NOT EXISTS saved_milestone_videos ( milestone INTEGER PRIMARY KEY, file_id TEXT NOT NULL, video_type TEXT NOT NULL DEFAULT 'video', created_at TEXT NOT NULL, updated_at TEXT NOT NULL ) """)
+
     conn.commit()
     conn.close()
 
@@ -224,6 +231,69 @@ def save_promotional_video(file_id, video_type="video"):
 
     conn.commit()
     conn.close()
+
+
+def set_pending_milestone_video_request(user_id, milestone):
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(""" INSERT OR REPLACE INTO pending_milestone_video_requests (user_id, milestone, created_at, updated_at) VALUES ( ?, ?, COALESCE( (SELECT created_at FROM pending_milestone_video_requests WHERE user_id = ?), ? ), ? ) """, (user_id, milestone, user_id, now, now))
+
+    conn.commit()
+    conn.close()
+
+
+def get_pending_milestone_video_request(user_id):
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(""" SELECT milestone FROM pending_milestone_video_requests WHERE user_id = ? LIMIT 1 """, (user_id,))
+
+    row = cursor.fetchone()
+    conn.close()
+
+    return int(row[0]) if row else None
+
+
+def clear_pending_milestone_video_request(user_id):
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(""" DELETE FROM pending_milestone_video_requests WHERE user_id = ? """, (user_id,))
+
+    conn.commit()
+    conn.close()
+
+
+def save_milestone_video(milestone, file_id, video_type="video"):
+
+    now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(""" INSERT OR REPLACE INTO saved_milestone_videos (milestone, file_id, video_type, created_at, updated_at) VALUES ( ?, ?, ?, COALESCE( (SELECT created_at FROM saved_milestone_videos WHERE milestone = ?), ? ), ? ) """, (milestone, file_id, video_type, milestone, now, now))
+
+    conn.commit()
+    conn.close()
+
+
+def get_milestone_video(milestone):
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(""" SELECT file_id, video_type FROM saved_milestone_videos WHERE milestone = ? LIMIT 1 """, (milestone,))
+
+    row = cursor.fetchone()
+    conn.close()
+
+    return row if row else None
 
 
 def has_pending_video_request(user_id):
@@ -2573,11 +2643,22 @@ async def setmilestone( update: Update, context: ContextTypes.DEFAULT_TYPE ):
 
     MIN_PUMP_MILESTONE = milestone
 
+    # IMPORTANT: /setmilestone controls the pump threshold only.
+    # It does NOT save/replace the normal promotional-call video.
+    # Instead, it asks for a dedicated video for this milestone.
+    user_id = update.effective_user.id if update.effective_user else None
+    if user_id:
+        set_pending_milestone_video_request(
+            user_id,
+            MIN_PUMP_MILESTONE
+        )
+
     await update.message.reply_text(
         "✅ Milestone setting updated!\n\n"
         f"🚀 Minimum pump alert: {MIN_PUMP_MILESTONE}X\n\n"
-        "The live tracker will now send alerts starting "
-        f"from {MIN_PUMP_MILESTONE}X."
+        f"🎥 Now send the video you want to use for {MIN_PUMP_MILESTONE}X pump alerts.\n"
+        "⚠️ This video will NOT replace the normal promotional-call video.\n\n"
+        "📌 Send the video as a Telegram video message."
     )
 
 
@@ -2646,21 +2727,49 @@ async def send_pump_alert( context, call_id, kol_username, project_name, call_mc
 
     try:
 
-        await context.bot.send_message(
+        milestone_video = get_milestone_video(milestone)
 
-            chat_id=LIVE_CHANNEL,
+        if milestone_video:
 
-            text=alert_text,
+            video_file_id, video_type = milestone_video
 
-            parse_mode="HTML",
+            if video_type == "animation":
+                await context.bot.send_animation(
+                    chat_id=LIVE_CHANNEL,
+                    animation=video_file_id,
+                    caption=alert_text,
+                    parse_mode="HTML",
+                )
+            else:
+                await context.bot.send_video(
+                    chat_id=LIVE_CHANNEL,
+                    video=video_file_id,
+                    caption=alert_text,
+                    parse_mode="HTML",
+                )
 
-            disable_web_page_preview=True,
-        )
+            save_call_video(call_id, video_file_id)
 
-        print(
-            f"🚀 {milestone}X ALERT SENT "
-            f"for call #{call_id}"
-        )
+            print(
+                f"🚀 {milestone}X ALERT + milestone video SENT "
+                f"for call #{call_id}"
+            )
+
+        else:
+
+            # No dedicated milestone video has been saved yet.
+            # Keep the existing text-only fallback.
+            await context.bot.send_message(
+                chat_id=LIVE_CHANNEL,
+                text=alert_text,
+                parse_mode="HTML",
+                disable_web_page_preview=True,
+            )
+
+            print(
+                f"🚀 {milestone}X ALERT SENT WITHOUT VIDEO "
+                f"for call #{call_id}"
+            )
 
         return True
 
@@ -4599,7 +4708,61 @@ async def promotional_video_handler( update: Update, context: ContextTypes.DEFAU
 
     user_id = update.effective_user.id
 
-    # Only the registered video owner can set the global video.
+    # -----------------------------------------------------
+    # DEDICATED MILESTONE VIDEO
+    # -----------------------------------------------------
+    # If /setmilestone was just used, this video belongs ONLY
+    # to that pump milestone. It must never overwrite the normal
+    # promotional-call video.
+    pending_milestone = get_pending_milestone_video_request(user_id)
+
+    if pending_milestone is not None:
+
+        if message.video:
+            video_file_id = message.video.file_id
+            video_type = "video"
+        elif message.animation:
+            video_file_id = message.animation.file_id
+            video_type = "animation"
+        else:
+            await message.reply_text(
+                "❌ Please send the milestone video as a Telegram video."
+            )
+            return
+
+        try:
+            save_milestone_video(
+                pending_milestone,
+                video_file_id,
+                video_type
+            )
+
+            clear_pending_milestone_video_request(user_id)
+
+            await message.reply_text(
+                f"✅ {pending_milestone}X milestone video saved!\n\n"
+                f"🚀 Every new {pending_milestone}X pump alert will use this video.\n"
+                "📌 Your normal promotional-call video was NOT changed."
+            )
+
+            print(
+                f"✅ Saved dedicated {pending_milestone}X milestone video "
+                f"for user {user_id}"
+            )
+
+        except Exception as error:
+            print(
+                "❌ Could not save milestone video: "
+                f"{type(error).__name__}: {error}"
+            )
+
+            await message.reply_text(
+                "❌ Milestone video could not be saved. Please send it again."
+            )
+
+        return
+
+    # Only the registered video owner can set the normal promotional video.
     if get_video_request_owner() != user_id:
         return
 
