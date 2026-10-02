@@ -3216,7 +3216,25 @@ async def send_pump_alert( context, call_id, kol_username, project_name, call_mc
 
     try:
 
+        # First use the exact milestone video (for example 5X -> 5X video).
+        # If the exact milestone has no dedicated video, fall back to the
+        # currently configured minimum milestone video. This prevents a
+        # saved 5X video from being silently skipped because the calculated
+        # live multiplier is represented by a different integer milestone.
         milestone_video = get_milestone_video(milestone)
+        video_source_milestone = milestone
+
+        if not milestone_video and MIN_PUMP_MILESTONE != milestone:
+            milestone_video = get_milestone_video(MIN_PUMP_MILESTONE)
+            if milestone_video:
+                video_source_milestone = MIN_PUMP_MILESTONE
+
+        print(
+            f"🎥 Milestone video lookup | detected={milestone}X | "
+            f"configured={MIN_PUMP_MILESTONE}X | "
+            f"source={video_source_milestone}X | "
+            f"found={'YES' if milestone_video else 'NO'}"
+        )
 
         if milestone_video:
 
@@ -3240,8 +3258,8 @@ async def send_pump_alert( context, call_id, kol_username, project_name, call_mc
             save_call_video(call_id, video_file_id)
 
             print(
-                f"🚀 {milestone}X ALERT + milestone video SENT "
-                f"for call #{call_id}"
+                f"🚀 {milestone}X ALERT + {video_source_milestone}X "
+                f"milestone video SENT for call #{call_id}"
             )
 
         else:
