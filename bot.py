@@ -651,17 +651,11 @@ def get_milestone_video(milestone):
     conn = get_connection()
     cursor = conn.cursor()
 
-    # First use a dedicated video for this exact milestone.
+    # ONLY use the video assigned to this exact milestone.
+    # Example: 2X uses the 2X video, 3X uses the 3X video, etc.
     cursor.execute(""" SELECT file_id, video_type FROM saved_milestone_videos WHERE milestone = ? LIMIT 1 """, (milestone,))
 
     row = cursor.fetchone()
-
-    # If there is no dedicated video, use the universal video saved
-    # under milestone 0 for every 2X..1000X alert.
-    if not row:
-        cursor.execute(""" SELECT file_id, video_type FROM saved_milestone_videos WHERE milestone = 0 LIMIT 1 """)
-        row = cursor.fetchone()
-
     conn.close()
 
     return row if row else None
@@ -3139,17 +3133,18 @@ async def setmilestone( update: Update, context: ContextTypes.DEFAULT_TYPE ):
 
         return
 
-    # Milestone detection is fixed at 2X..1000X. The command is used
-    # to upload the universal milestone video, not to disable lower X hits.
+    # Milestone detection is always 2X..1000X.
+    # The number entered here selects WHICH milestone gets the video.
     MIN_PUMP_MILESTONE = 2
 
-    set_pending_milestone_video_request(user_id, 0)
+    set_pending_milestone_video_request(user_id, milestone)
 
     await update.message.reply_text(
-        "✅ Milestone tracking is fixed at 2X → 1000X.\n\n"
-        "🎥 Now send ONE milestone video.\n"
-        "📌 The same video will be reused for every milestone from 2X to 1000X.\n"
-        "⚠️ Your normal promotional-call video will NOT be changed."
+        f"✅ Milestone tracking is fixed at 2X → 1000X.\n\n"
+        f"🎥 Now send the video for <b>{milestone}X</b>.\n"
+        f"📌 This video will be used ONLY when the bot detects {milestone}X.\n"
+        "⚠️ Your normal promotional-call video will NOT be changed.",
+        parse_mode="HTML",
     )
 
 
@@ -5431,16 +5426,10 @@ async def promotional_video_handler( update: Update, context: ContextTypes.DEFAU
             clear_pending_milestone_video_request(user_id)
 
             await message.reply_text(
-                (
-                    "✅ Universal milestone video saved!\n\n"
-                    "🚀 This same video will be used for every 2X → 1000X milestone alert.\n"
-                    "📌 Your normal promotional-call video was NOT changed."
-                    if int(pending_milestone) == 0
-                    else
-                    f"✅ {pending_milestone}X milestone video saved!\n\n"
-                    f"🚀 Every new {pending_milestone}X pump alert will use this video.\n"
-                    "📌 Your normal promotional-call video was NOT changed."
-                )
+                f"✅ {pending_milestone}X milestone video saved!\n\n"
+                f"🚀 This video will be used ONLY for {pending_milestone}X alerts.\n"
+                "📌 You can set a different video for every milestone.\n"
+                "📌 Your normal promotional-call video was NOT changed."
             )
 
             print(
@@ -5719,4 +5708,4 @@ def main():
 
 if __name__ == "__main__":
 
-    main()  
+    main() 
