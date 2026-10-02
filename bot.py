@@ -3150,10 +3150,14 @@ async def setmilestone( update: Update, context: ContextTypes.DEFAULT_TYPE ):
     # IMPORTANT: /setmilestone controls the pump threshold only.
     # It does NOT save/replace the normal promotional-call video.
     # Instead, it asks for a dedicated video for this milestone.
+    # Keep the pending milestone in both SQLite and the current private
+    # session. The DB survives restarts; user_data makes the video handler
+    # unambiguous in the same chat/session.
     set_pending_milestone_video_request(
         user_id,
         MIN_PUMP_MILESTONE
     )
+    context.user_data["pending_milestone_video"] = MIN_PUMP_MILESTONE
 
     await update.message.reply_text(
         "✅ Milestone setting updated!\n\n"
@@ -3216,18 +3220,13 @@ async def send_pump_alert( context, call_id, kol_username, project_name, call_mc
 
     try:
 
-        # First use the exact milestone video (for example 5X -> 5X video).
-        # If the exact milestone has no dedicated video, fall back to the
-        # currently configured minimum milestone video. This prevents a
-        # saved 5X video from being silently skipped because the calculated
-        # live multiplier is represented by a different integer milestone.
+        # IMPORTANT:
+        # A milestone video is NEVER a promotional-call video.
+        # Only an explicitly saved video for the detected milestone is used.
+        # There is deliberately NO fallback to saved_promotional_video and
+        # NO fallback from another milestone.
         milestone_video = get_milestone_video(milestone)
         video_source_milestone = milestone
-
-        if not milestone_video and MIN_PUMP_MILESTONE != milestone:
-            milestone_video = get_milestone_video(MIN_PUMP_MILESTONE)
-            if milestone_video:
-                video_source_milestone = MIN_PUMP_MILESTONE
 
         print(
             f"🎥 Milestone video lookup | detected={milestone}X | "
@@ -4268,34 +4267,36 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
     # -----------------------------------------------------
     # DUPLICATE CALL PROTECTION
     # -----------------------------------------------------
-    # Same KOL + same contract = same promotion. Ignore repeats.
-    # Different KOLs can still promote the same contract.
-    clean_kol = normalize_channel(channel).lstrip("@").lower()
-    clean_contract = str(contract or "").strip().lower()
-
-    if clean_kol and clean_contract:
+    # There is NO per-channel or total-call limit.
+    #
+    # The same KOL may promote the same contract multiple times. Each
+    # distinct Telegram channel post is a separate detectable call.
+    #
+    # We only ignore the exact same Telegram post URL, which protects
+    # against Telegram delivering the same update more than once.
+    if original_call_link:
         try:
             conn = get_connection()
             cursor = conn.cursor()
             cursor.execute(
-                """ SELECT id FROM calls WHERE LOWER(REPLACE(kol_username, '@', '')) = ? AND LOWER(TRIM(COALESCE(contract, ''))) = ? ORDER BY id ASC LIMIT 1 """,
-                (clean_kol, clean_contract),
+                """ SELECT id FROM calls WHERE original_call_link = ? ORDER BY id ASC LIMIT 1 """,
+                (original_call_link,),
             )
             duplicate_row = cursor.fetchone()
             conn.close()
 
             if duplicate_row:
                 print(
-                    "⏭️ DUPLICATE CALL IGNORED | "
-                    f"KOL: {channel} | "
-                    f"Contract: {contract} | "
+                    "⏭️ DUPLICATE TELEGRAM POST IGNORED | "
+                    f"Channel: {channel} | "
+                    f"Post: {original_call_link} | "
                     f"Existing Call ID: {duplicate_row[0]}"
                 )
                 return
 
         except Exception as error:
             print(
-                "⚠️ Duplicate check failed; "
+                "⚠️ Exact-post duplicate check failed; "
                 f"continuing with call: {type(error).__name__}: {error}"
             )
 
@@ -5379,7 +5380,17 @@ async def promotional_video_handler( update: Update, context: ContextTypes.DEFAU
     # If /setmilestone was just used, this video belongs ONLY
     # to that pump milestone. It must never overwrite the normal
     # promotional-call video.
-    pending_milestone = get_pending_milestone_video_request(user_id)
+    # Milestone video has absolute priority over the normal promotional
+    # video. Check the active session first, then the persistent DB.
+    pending_milestone = context.user_data.get("pending_milestone_video")
+    if pending_milestone is None:
+        pending_milestone = get_pending_milestone_video_request(user_id)
+
+    if pending_milestone is not None:
+        try:
+            pending_milestone = int(pending_milestone)
+        except (TypeError, ValueError):
+            pending_milestone = None
 
     if pending_milestone is not None:
 
@@ -5403,6 +5414,7 @@ async def promotional_video_handler( update: Update, context: ContextTypes.DEFAU
             )
 
             clear_pending_milestone_video_request(user_id)
+            context.user_data.pop("pending_milestone_video", None)
 
             await message.reply_text(
                 f"✅ {pending_milestone}X milestone video saved!\n\n"
@@ -5561,6 +5573,11 @@ def main():
     print(
         "📡 Monitoring: "
         "ALL VERIFIED / APPROVED CHANNELS"
+    )
+
+    print(
+        "♾️ Call detection limit: UNLIMITED "
+        "(every distinct Telegram post can be tracked)"
     )
 
     print(
