@@ -8,7 +8,7 @@ on:
 
 concurrency:
   group: kolpulse-bot
-  cancel-in-progress: true
+  cancel-in-progress: false
 
 permissions:
   contents: read
@@ -71,7 +71,7 @@ jobs:
           retention-days: 90
 
       - name: Restart KOLPulse automatically
-        if: always()
+        if: ${{ always() && !cancelled() }}
         env:
           GH_TOKEN: ${{ github.token }}
-        run: gh workflow run bot.yml --ref main 
+        run: gh workflow run bot.yml --ref main  
