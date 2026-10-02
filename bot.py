@@ -4411,9 +4411,49 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
             chain_symbol
         )
 
-        mc_display = format_market_cap(
-            call_mc
+        # Keep call_mc FIXED as the historical baseline for X calculations.
+        # Fetch a fresh live MC only for what we display in the initial alert.
+        # This prevents the alert from looking "stuck" at the promotion-time MC.
+        live_display_mc = await fetch_live_market_cap(
+            contract,
+            chain_symbol
         )
+
+        if live_display_mc is None:
+            live_display_mc = call_mc
+
+        try:
+            live_display_mc = float(live_display_mc)
+        except (TypeError, ValueError):
+            live_display_mc = call_mc
+
+        # Keep the live value in the database too, while preserving call_mc.
+        try:
+            live_display_multiplier = (
+                live_display_mc / float(call_mc)
+                if float(call_mc) > 0 else 1.0
+            )
+            conn = get_connection()
+            cursor = conn.cursor()
+            cursor.execute(
+                """UPDATE calls SET current_mc = ?, multiplier = ?, ath_mc = MAX(COALESCE(ath_mc, 0), ?) WHERE id = ?""",
+                (
+                    live_display_mc,
+                    live_display_multiplier,
+                    live_display_mc,
+                    call_id,
+                )
+            )
+            conn.commit()
+            conn.close()
+        except Exception as error:
+            print(
+                "⚠️ Could not save fresh live MC for initial alert: "
+                f"{type(error).__name__}: {error}"
+            )
+
+        call_mc_display = format_market_cap(call_mc)
+        live_mc_display = format_market_cap(live_display_mc)
 
         chain_emoji = chain_custom_emoji(chain_symbol)
         project_url = html.escape(
@@ -4434,7 +4474,8 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
 
             f'{chain_emoji} '
             f'<a href="{project_url}">{safe_token}</a>\n'
-            f'💰 <b>Call MC:</b> {mc_display}\n'
+            f'🎯 <b>Call MC:</b> {call_mc_display}\n'
+            f'📈 <b>Live MC:</b> {live_mc_display}\n'
             f'⛓️ <b>Chain:</b> {safe_chain}\n\n'
 
             "We've started tracking it and "
@@ -5678,4 +5719,4 @@ def main():
 
 if __name__ == "__main__":
 
-    main()
+    main()  
