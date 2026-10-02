@@ -34,11 +34,12 @@ jobs:
         uses: actions/cache@v4
         with:
           path: kolpulse.db
-          key: kolpulse-db-${{ github.ref_name }}-${{ github.run_id }}
-          restore-keys: kolpulse-db-${{ github.ref_name }}-
+          key: "kolpulse-db-${{ github.ref_name }}-${{ github.run_id }}"
+          restore-keys: "kolpulse-db-${{ github.ref_name }}-"
 
-      - name: Show database status
-        run: | if [ -f kolpulse.db ]; then echo "KOLPulse database restored successfully." ls -lh kolpulse.db else echo "No previous KOLPulse database found. A new database will be created." fi 
+      - name: Check database
+        run: 'if [ -f kolpulse.db ]; then echo "Database restored"; ls -lh kolpulse.db; else echo "No database found - new database will be created"; fi'
+
       - name: Run KOLPulse Bot
         env:
           BOT_TOKEN: "${{ secrets.BOT_TOKEN }}"
@@ -55,7 +56,8 @@ jobs:
 
       - name: Confirm database
         if: always()
-        run: | if [ -f kolpulse.db ]; then echo "KOLPulse database exists and will be saved by the cache action." ls -lh kolpulse.db else echo "WARNING: kolpulse.db was not found." fi 
+        run: 'if [ -f kolpulse.db ]; then echo "Database file exists"; ls -lh kolpulse.db; else echo "WARNING: kolpulse.db was not found"; fi'
+
       - name: Start next run automatically
         if: always()
         env:
