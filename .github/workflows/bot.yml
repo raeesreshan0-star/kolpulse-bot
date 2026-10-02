@@ -42,7 +42,7 @@ jobs:
           PREMIUM_EMOJI_KOL: "${{ secrets.PREMIUM_EMOJI_KOL }}"
           PREMIUM_EMOJI_BOT: "${{ secrets.PREMIUM_EMOJI_BOT }}"
           PYTHONUNBUFFERED: "1"
-        run: timeout --signal=TERM --kill-after=30s 5h30m python -u bot.py
+        run: timeout --signal=TERM --kill-after=30s 19800s python -u bot.py
 
       - name: Start next run automatically
         if: always()
