@@ -1,92 +1,83 @@
-name: KOLPulse Bot
+steps:
+  - name: Checkout repository
+    uses: actions/checkout@v4
 
-on:
-  workflow_dispatch:
-  push:
-    branches:
-      - main
+  # ============================================================
+  # RESTORE DATABASE FROM THE LAST SUCCESSFUL RUN
+  # ============================================================
+  # If there is no previous database artifact yet, the bot simply
+  # starts with a fresh database.
+  - name: Restore KOLPulse database
+    id: restore_db
+    continue-on-error: true
+    uses: step-security/action-download-artifact@v11
+    with:
+      github_token: ${{ secrets.GITHUB_TOKEN }}
+      workflow: bot.yml
+      branch: main
+      workflow_conclusion: success
+      name: kolpulse-db
+      path: .
+      search_artifacts: true
+      check_artifacts: true
 
-concurrency:
-  group: kolpulse-bot
-  cancel-in-progress: true
+  - name: Check database
+    run: |
+      if [ -f kolpulse.db ]; then
+        echo "KOLPulse database restored successfully."
+        ls -lh kolpulse.db
+      else
+        echo "No previous kolpulse.db artifact found."
+        echo "Bot will create a new database."
+      fi
 
-permissions:
-  contents: read
-  actions: write
+  - name: Setup Python
+    uses: actions/setup-python@v5
+    with:
+      python-version: "3.11"
 
-jobs:
-  run-bot:
-    runs-on: ubuntu-latest
+  - name: Install dependencies
+    run: python -m pip install -r requirements.txt
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
+  # ============================================================
+  # RUN BOT FOR 5H30M
+  # ============================================================
+  - name: Run KOLPulse Bot
+    continue-on-error: true
+    env:
+      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+      GROUP_CHAT_ID: ${{ secrets.GROUP_CHAT_ID }}
+      OWNER_USER_ID: ${{ secrets.OWNER_USER_ID }}
+      PROMOTIONAL_VIDEO_FILE_ID: ${{ secrets.PROMOTIONAL_VIDEO_FILE_ID }}
+      PREMIUM_EMOJI_CALL: ${{ secrets.PREMIUM_EMOJI_CALL }}
+      PREMIUM_EMOJI_PLANE: ${{ secrets.PREMIUM_EMOJI_PLANE }}
+      PREMIUM_EMOJI_CONTRACT: ${{ secrets.PREMIUM_EMOJI_CONTRACT }}
+      PREMIUM_EMOJI_KOL: ${{ secrets.PREMIUM_EMOJI_KOL }}
+      PREMIUM_EMOJI_BOT: ${{ secrets.PREMIUM_EMOJI_BOT }}
+      PYTHONUNBUFFERED: "1"
+    run: timeout --kill-after=30s 5h30m python -u bot.py
 
-      # Restore the persistent SQLite database from the previous run.
-      - name: Restore KOLPulse database
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: | echo "Looking for the latest KOLPulse database artifact..." 
-          RUN_ID=$(gh api \
-            "repos/${{ github.repository }}/actions/workflows/bot.yml/runs?branch=main&status=success&per_page=20" \
-            --jq '.workflow_runs | map(select(.id != ${{ github.run_id }})) | .[0].id' 2>/dev/null || true)
+  # ============================================================
+  # SAVE DATABASE BEFORE RESTART
+  # ============================================================
+  - name: Save KOLPulse database
+    if: always()
+    uses: actions/upload-artifact@v4
+    with:
+      name: kolpulse-db
+      path: kolpulse.db
+      if-no-files-found: warn
+      retention-days: 90
 
-          if [ -n "$RUN_ID" ] && [ "$RUN_ID" != "null" ]; then
-            echo "Found previous successful run: $RUN_ID"
-
-            if gh run download "$RUN_ID" \
-              --name kolpulse-db \
-              --dir . 2>/dev/null; then
-              echo "Previous kolpulse.db restored."
-            else
-              echo "No previous database artifact found."
-            fi
-          else
-            echo "No previous successful run found."
-          fi
-
-          if [ -f kolpulse.db ]; then
-            echo "kolpulse.db is present before bot startup."
-            ls -lh kolpulse.db
-          else
-            echo "kolpulse.db does not exist yet."
-          fi
-
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
-
-      - name: Install dependencies
-        run: python -m pip install -r requirements.txt
-
-      - name: Run KOLPulse Bot
-        continue-on-error: true
-        env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          GROUP_CHAT_ID: ${{ secrets.GROUP_CHAT_ID }}
-          OWNER_USER_ID: ${{ secrets.OWNER_USER_ID }}
-          PROMOTIONAL_VIDEO_FILE_ID: ${{ secrets.PROMOTIONAL_VIDEO_FILE_ID }}
-          PREMIUM_EMOJI_CALL: ${{ secrets.PREMIUM_EMOJI_CALL }}
-          PREMIUM_EMOJI_PLANE: ${{ secrets.PREMIUM_EMOJI_PLANE }}
-          PREMIUM_EMOJI_CONTRACT: ${{ secrets.PREMIUM_EMOJI_CONTRACT }}
-          PREMIUM_EMOJI_KOL: ${{ secrets.PREMIUM_EMOJI_KOL }}
-          PREMIUM_EMOJI_BOT: ${{ secrets.PREMIUM_EMOJI_BOT }}
-          PYTHONUNBUFFERED: "1"
-        run: timeout --kill-after=30s 5h30m python -u bot.py
-
-      # Save the database BEFORE dispatching the next run.
-      - name: Save KOLPulse database
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: kolpulse-db
-          path: kolpulse.db
-          if-no-files-found: warn
-          retention-days: 90
-
-      - name: Restart KOLPulse automatically
-        if: always()
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: | echo "Starting the next KOLPulse Bot run..." sleep 10 gh workflow run bot.yml --ref main echo "Next KOLPulse Bot run dispatched successfully."
+  # ============================================================
+  # AUTOMATIC 5H30M RESTART
+  # ============================================================
+  - name: Restart KOLPulse automatically
+    if: always()
+    env:
+      GH_TOKEN: ${{ github.token }}
+    run: |
+      echo "Starting the next KOLPulse Bot run..."
+      sleep 10
+      gh workflow run bot.yml --ref main
+      echo "Next KOLPulse Bot run dispatched successfully."
