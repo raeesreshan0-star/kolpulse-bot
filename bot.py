@@ -634,6 +634,11 @@ def clear_pending_milestone_video_request(user_id):
     conn.close()
 
 
+# SPECIAL MILESTONE VIDEO SLOT
+# 0 = one universal milestone video used for every X from 2X to 1000X.
+UNIVERSAL_MILESTONE_VIDEO = 0
+
+
 def save_milestone_video(milestone, file_id, video_type="video"):
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -641,7 +646,19 @@ def save_milestone_video(milestone, file_id, video_type="video"):
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(""" INSERT OR REPLACE INTO saved_milestone_videos (milestone, file_id, video_type, created_at, updated_at) VALUES ( ?, ?, ?, COALESCE( (SELECT created_at FROM saved_milestone_videos WHERE milestone = ?), ? ), ? ) """, (milestone, file_id, video_type, milestone, now, now))
+    # Save the uploaded video as the universal milestone video.
+    # The same Telegram file_id is reused for 2X, 3X, 4X ... 1000X.
+    cursor.execute(
+        """ INSERT OR REPLACE INTO saved_milestone_videos (milestone, file_id, video_type, created_at, updated_at) VALUES ( ?, ?, ?, COALESCE( (SELECT created_at FROM saved_milestone_videos WHERE milestone = ?), ? ), ? ) """,
+        (
+            UNIVERSAL_MILESTONE_VIDEO,
+            file_id,
+            video_type,
+            UNIVERSAL_MILESTONE_VIDEO,
+            now,
+            now,
+        ),
+    )
 
     conn.commit()
     conn.close()
@@ -652,9 +669,22 @@ def get_milestone_video(milestone):
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(""" SELECT file_id, video_type FROM saved_milestone_videos WHERE milestone = ? LIMIT 1 """, (milestone,))
+    # Exact milestone is checked first in case an old database contains one.
+    cursor.execute(
+        """ SELECT file_id, video_type FROM saved_milestone_videos WHERE milestone = ? LIMIT 1 """,
+        (milestone,),
+    )
 
     row = cursor.fetchone()
+
+    if not row:
+        # Universal video: same video for every milestone 2X..1000X.
+        cursor.execute(
+            """ SELECT file_id, video_type FROM saved_milestone_videos WHERE milestone = ? LIMIT 1 """,
+            (UNIVERSAL_MILESTONE_VIDEO,),
+        )
+        row = cursor.fetchone()
+
     conn.close()
 
     return row if row else None
@@ -3100,9 +3130,8 @@ async def setmilestone( update: Update, context: ContextTypes.DEFAULT_TYPE ):
             "⚙️ Current minimum milestone: "
             f"{MIN_PUMP_MILESTONE}X\n\n"
             "Usage:\n"
-            "/setmilestone 2\n"
-            "/setmilestone 3\n"
-            "/setmilestone 5"
+            "/setmilestone 2\n\n"
+            "For 2X → 1000X alerts, use /setmilestone 2."
         )
 
         return
@@ -3162,7 +3191,8 @@ async def setmilestone( update: Update, context: ContextTypes.DEFAULT_TYPE ):
     await update.message.reply_text(
         "✅ Milestone setting updated!\n\n"
         f"🚀 Minimum pump alert: {MIN_PUMP_MILESTONE}X\n\n"
-        f"🎥 Now send the video you want to use for {MIN_PUMP_MILESTONE}X pump alerts.\n"
+        "🎥 Now send ONE milestone video.\n"
+        f"🚀 It will be used for every milestone from {MIN_PUMP_MILESTONE}X up to 1000X.\n"
         "⚠️ This video will NOT replace the normal promotional-call video.\n\n"
         "📌 Send the video as a Telegram video message."
     )
@@ -3222,9 +3252,9 @@ async def send_pump_alert( context, call_id, kol_username, project_name, call_mc
 
         # IMPORTANT:
         # A milestone video is NEVER a promotional-call video.
-        # Only an explicitly saved video for the detected milestone is used.
-        # There is deliberately NO fallback to saved_promotional_video and
-        # NO fallback from another milestone.
+        # One universal milestone video can be reused for every X from
+        # 2X through 1000X. The alert text itself shows the actual
+        # detected milestone (2X, 3X, 4X ... 1000X).
         milestone_video = get_milestone_video(milestone)
         video_source_milestone = milestone
 
@@ -5418,7 +5448,8 @@ async def promotional_video_handler( update: Update, context: ContextTypes.DEFAU
 
             await message.reply_text(
                 f"✅ {pending_milestone}X milestone video saved!\n\n"
-                f"🚀 Every new {pending_milestone}X pump alert will use this video.\n"
+                "🚀 This same video will be used for every pump milestone "
+                f"from {pending_milestone}X up to 1000X.\n"
                 "📌 Your normal promotional-call video was NOT changed."
             )
 
@@ -5703,4 +5734,4 @@ def main():
 
 if __name__ == "__main__":
 
-    main()  
+    main()   
