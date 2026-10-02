@@ -30,6 +30,17 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
+      # IMPORTANT:
+      # GitHub-hosted runners are temporary. Restore the SQLite database
+      # before starting the bot so verified channels/calls survive restarts.
+      - name: Restore KOLPulse database
+        uses: actions/cache/restore@v4
+        with:
+          path: kolpulse.db
+          key: kolpulse-db-${{ github.ref_name }}-${{ github.run_id }}
+          restore-keys: | kolpulse-db-${{ github.ref_name }}- 
+      - name: Show database status
+        run: | if [ -f kolpulse.db ]; then echo "KOLPulse database restored successfully." ls -lh kolpulse.db else echo "No previous KOLPulse database found. A new database will be created." fi 
       - name: Run KOLPulse Bot
         env:
           BOT_TOKEN: "${{ secrets.BOT_TOKEN }}"
@@ -44,8 +55,19 @@ jobs:
           PYTHONUNBUFFERED: "1"
         run: timeout --signal=TERM --kill-after=30s 19800s python -u bot.py
 
+      # Save the DB even when the long-running bot exits with timeout code 124.
+      - name: Save KOLPulse database
+        if: always()
+        uses: actions/cache/save@v4
+        with:
+          path: kolpulse.db
+          key: kolpulse-db-${{ github.ref_name }}-${{ github.run_id }}
+
+      - name: Confirm database save
+        if: always()
+        run: | if [ -f kolpulse.db ]; then echo "KOLPulse database is ready for persistence." ls -lh kolpulse.db else echo "WARNING: kolpulse.db was not found." fi 
       - name: Start next run automatically
         if: always()
         env:
           GH_TOKEN: "${{ github.token }}"
-        run: gh workflow run bot.yml --ref main   
+        run: gh workflow run bot.yml --ref main
