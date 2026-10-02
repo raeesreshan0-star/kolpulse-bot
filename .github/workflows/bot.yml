@@ -17,7 +17,6 @@ permissions:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
-
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -36,7 +35,8 @@ jobs:
           check_artifacts: true
 
       - name: Check database
-        run: | if [ -f kolpulse.db ]; then echo "KOLPulse database restored successfully." ls -lh kolpulse.db else echo "No previous kolpulse.db artifact found." echo "Bot will create a new database." fi 
+        run: if [ -f kolpulse.db ]; then echo "KOLPulse database restored successfully."; ls -lh kolpulse.db; else echo "No previous kolpulse.db artifact found. Bot will create a new database."; fi
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -73,4 +73,4 @@ jobs:
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
-        run: | echo "Starting the next KOLPulse Bot run..." sleep 10 gh workflow run bot.yml --ref main echo "Next KOLPulse Bot run dispatched successfully." 
+        run: gh workflow run bot.yml --ref main
