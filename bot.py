@@ -542,16 +542,11 @@ def get_video_request_owner():
 
 
 def bootstrap_saved_promotional_video_from_calls():
-
-    # Promotional-call video and milestone videos are intentionally
-    # stored separately. Never infer the global promotional video
-    # from calls.video_file_id because older versions could have
-    # written a milestone video there.
-    #
-    # If no global promotional video exists, the normal video handler
-    # will request one from the owner.
+    # Disabled intentionally. A call's video_file_id may contain a
+    # milestone video and must NEVER be promoted to the global
+    # promotional-call video. The normal promotional video is managed
+    # only through saved_promotional_video / /setpromo.
     return
-
 
 def get_saved_promotional_video():
 
@@ -3217,8 +3212,9 @@ async def send_pump_alert( context, call_id, kol_username, project_name, call_mc
                     parse_mode="HTML",
                 )
 
-            # IMPORTANT: milestone videos are dedicated to their exact milestone.
-            # Never overwrite the normal promotional-call video stored on the call.
+            # IMPORTANT: milestone videos are dedicated to this milestone.
+            # Never write them into calls.video_file_id because that column
+            # belongs to the normal promotional-call video.
             print(
                 f"🚀 {milestone}X ALERT + dedicated milestone video SENT "
                 f"for call #{call_id}"
@@ -5433,6 +5429,11 @@ async def promotional_video_handler( update: Update, context: ContextTypes.DEFAU
         return
 
     # Only the registered video owner can set the normal promotional video.
+    # /setpromo explicitly authorizes replacing the normal promotional video.
+    force_promotional_video = bool(
+        context.user_data.pop("force_promotional_video", False)
+    )
+
     if get_video_request_owner() != user_id:
         return
 
@@ -5522,6 +5523,40 @@ async def promotional_video_handler( update: Update, context: ContextTypes.DEFAU
             "❌ Video could not be saved/published.\n\n"
             "Please send the video again."
         )
+
+
+# =========================================================
+# SET / REPLACE NORMAL PROMOTIONAL VIDEO
+# =========================================================
+
+async def setpromo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    user_id = update.effective_user.id if update.effective_user else None
+
+    if not is_owner_user(user_id):
+        if update.message:
+            await update.message.reply_text(
+                "⛔ You are not authorized to change the promotional video."
+            )
+        return
+
+    if not update.effective_chat or update.effective_chat.type != "private":
+        await update.message.reply_text(
+            "⚠️ Use /setpromo in the bot's private chat."
+        )
+        return
+
+    # Tell the video handler that the next video is explicitly the
+    # normal promotional-call video, not a milestone video.
+    context.user_data["force_promotional_video"] = True
+
+    await update.message.reply_text(
+        "🎥 <b>Send the NEW promotional-call video now.</b>\n\n"
+        "📌 This video will be used for normal CALL ALERTS.\n"
+        "🚀 Your 2X → 1000X milestone videos will NOT be changed.\n\n"
+        "Send the video as a Telegram video message.",
+        parse_mode="HTML",
+    )
 
 
 # =========================================================
@@ -5633,6 +5668,13 @@ def main():
         CommandHandler(
             "setmilestone",
             setmilestone
+        )
+    )
+
+    app.add_handler(
+        CommandHandler(
+            "setpromo",
+            setpromo
         )
     )
 
