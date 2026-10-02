@@ -1,18 +1,15 @@
 name: KOLPulse Bot
 
 on:
-  workflow_dispatch:
   push:
     branches:
       - main
+  workflow_dispatch:
 
-# Only one KOLPulse instance should run at a time.
-# The next run is started automatically before GitHub's job time limit.
 concurrency:
   group: kolpulse-bot
   cancel-in-progress: true
 
-# Needed so the workflow can dispatch its next run automatically.
 permissions:
   contents: read
   actions: write
@@ -31,8 +28,7 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: python -m pip install -r requirements.txt
-
+        run: | python -m pip install --upgrade pip python -m pip install -r requirements.txt 
       - name: Run KOLPulse Bot
         continue-on-error: true
         env:
@@ -46,12 +42,9 @@ jobs:
           PREMIUM_EMOJI_KOL: ${{ secrets.PREMIUM_EMOJI_KOL }}
           PREMIUM_EMOJI_BOT: ${{ secrets.PREMIUM_EMOJI_BOT }}
           PYTHONUNBUFFERED: "1"
-        # Stop before GitHub's maximum job execution time.
-        # --kill-after makes sure the old bot process is fully terminated.
-        run: timeout --kill-after=30s 5h30m python -u bot.py
-
-      - name: Restart KOLPulse automatically
+        run: | echo "KOLPulse Bot started." timeout --kill-after=30s 5h30m python -u bot.py exit_code=$? echo "Bot process ended with exit code: $exit_code" exit 0 
+      - name: Start the next run automatically
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
-        run: | echo "Starting the next KOLPulse Bot run..." sleep 10 gh workflow run bot.yml --ref main echo "Next KOLPulse Bot run dispatched successfully."           
+        run: | echo "Waiting before starting the next KOLPulse run..." sleep 15 gh workflow run bot.yml --ref main echo "Next KOLPulse run requested."
