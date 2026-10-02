@@ -2,11 +2,13 @@ import sqlite3
 from datetime import datetime
 
 
+# Persistent SQLite database file used by KOLPulse.
+# The GitHub Actions workflow restores/saves this file between runs.
 DATABASE_NAME = "kolpulse.db"
 
 
 def get_connection():
-    return sqlite3.connect(DATABASE_NAME)
+    return sqlite3.connect(DATABASE_NAME, timeout=30)
 
 
 # =========================================================
@@ -22,50 +24,19 @@ def init_database():
     # CALLS
     # =====================================================
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS calls (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            kol_username TEXT NOT NULL,
-            kol_link TEXT,
-            project_name TEXT NOT NULL,
-            project_link TEXT,
-            original_call_link TEXT,
-            call_mc REAL,
-            current_mc REAL,
-            multiplier REAL DEFAULT 0,
-            call_time TEXT,
-            video_file_id TEXT,
-            status TEXT DEFAULT 'live',
-            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
+    cursor.execute(""" CREATE TABLE IF NOT EXISTS calls ( id INTEGER PRIMARY KEY AUTOINCREMENT, kol_username TEXT NOT NULL, kol_link TEXT, project_name TEXT NOT NULL, project_link TEXT, original_call_link TEXT, call_mc REAL, current_mc REAL, multiplier REAL DEFAULT 0, call_time TEXT, video_file_id TEXT, status TEXT DEFAULT 'live', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ) """)
 
     # =====================================================
     # VERIFIED CHANNELS
     # =====================================================
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS verified_channels (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            channel_username TEXT UNIQUE NOT NULL,
-            user_id INTEGER,
-            verified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
+    cursor.execute(""" CREATE TABLE IF NOT EXISTS verified_channels ( id INTEGER PRIMARY KEY AUTOINCREMENT, channel_username TEXT UNIQUE NOT NULL, user_id INTEGER, verified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ) """)
 
     # =====================================================
     # PENDING CHANNEL REQUESTS
     # =====================================================
 
-    cursor.execute("""
-        CREATE TABLE IF NOT EXISTS channel_requests (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            channel_username TEXT UNIQUE NOT NULL,
-            user_id INTEGER,
-            status TEXT DEFAULT 'pending',
-            submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-        )
-    """)
+    cursor.execute(""" CREATE TABLE IF NOT EXISTS channel_requests ( id INTEGER PRIMARY KEY AUTOINCREMENT, channel_username TEXT UNIQUE NOT NULL, user_id INTEGER, status TEXT DEFAULT 'pending', submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ) """)
 
     conn.commit()
     conn.close()
@@ -105,10 +76,7 @@ def normalize_channel_username(channel_username):
 # VERIFIED CHANNELS
 # =========================================================
 
-def add_verified_channel(
-    channel_username,
-    user_id=None
-):
+def add_verified_channel( channel_username, user_id=None ):
 
     channel_username = normalize_channel_username(
         channel_username
@@ -121,24 +89,14 @@ def add_verified_channel(
         "%Y-%m-%d %H:%M:%S"
     )
 
-    cursor.execute("""
-        INSERT OR REPLACE INTO verified_channels (
-            channel_username,
-            user_id,
-            verified_at
-        )
-        VALUES (?, ?, ?)
-    """, (
+    cursor.execute(""" INSERT OR REPLACE INTO verified_channels ( channel_username, user_id, verified_at ) VALUES (?, ?, ?) """, (
         channel_username,
         user_id,
         verified_at,
     ))
 
     # Remove pending request after approval
-    cursor.execute("""
-        DELETE FROM channel_requests
-        WHERE channel_username = ?
-    """, (
+    cursor.execute(""" DELETE FROM channel_requests WHERE channel_username = ? """, (
         channel_username,
     ))
 
@@ -157,15 +115,7 @@ def get_verified_channel(channel_username):
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute("""
-        SELECT
-            id,
-            channel_username,
-            user_id,
-            verified_at
-        FROM verified_channels
-        WHERE channel_username = ?
-    """, (
+    cursor.execute(""" SELECT id, channel_username, user_id, verified_at FROM verified_channels WHERE channel_username = ? """, (
         channel_username,
     ))
 
@@ -192,10 +142,7 @@ def get_verified_at(channel_username):
 # PENDING REQUESTS
 # =========================================================
 
-def add_pending_channel(
-    channel_username,
-    user_id=None
-):
+def add_pending_channel( channel_username, user_id=None ):
 
     channel_username = normalize_channel_username(
         channel_username
@@ -204,14 +151,7 @@ def add_pending_channel(
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute("""
-        INSERT OR IGNORE INTO channel_requests (
-            channel_username,
-            user_id,
-            status
-        )
-        VALUES (?, ?, 'pending')
-    """, (
+    cursor.execute(""" INSERT OR IGNORE INTO channel_requests ( channel_username, user_id, status ) VALUES (?, ?, 'pending') """, (
         channel_username,
         user_id,
     ))
@@ -229,17 +169,7 @@ def get_pending_channel(channel_username):
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute("""
-        SELECT
-            id,
-            channel_username,
-            user_id,
-            status,
-            submitted_at
-        FROM channel_requests
-        WHERE channel_username = ?
-        AND status = 'pending'
-    """, (
+    cursor.execute(""" SELECT id, channel_username, user_id, status, submitted_at FROM channel_requests WHERE channel_username = ? AND status = 'pending' """, (
         channel_username,
     ))
 
@@ -259,10 +189,7 @@ def remove_pending_channel(channel_username):
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute("""
-        DELETE FROM channel_requests
-        WHERE channel_username = ?
-    """, (
+    cursor.execute(""" DELETE FROM channel_requests WHERE channel_username = ? """, (
         channel_username,
     ))
 
@@ -274,39 +201,12 @@ def remove_pending_channel(channel_username):
 # CALLS
 # =========================================================
 
-def add_call(
-    kol_username,
-    project_name,
-    kol_link=None,
-    project_link=None,
-    original_call_link=None,
-    call_mc=None,
-    current_mc=None,
-    multiplier=0,
-    call_time=None,
-    video_file_id=None,
-    status="live",
-):
+def add_call( kol_username, project_name, kol_link=None, project_link=None, original_call_link=None, call_mc=None, current_mc=None, multiplier=0, call_time=None, video_file_id=None, status="live", ):
 
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute("""
-        INSERT INTO calls (
-            kol_username,
-            kol_link,
-            project_name,
-            project_link,
-            original_call_link,
-            call_mc,
-            current_mc,
-            multiplier,
-            call_time,
-            video_file_id,
-            status
-        )
-        VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-    """, (
+    cursor.execute(""" INSERT INTO calls ( kol_username, kol_link, project_name, project_link, original_call_link, call_mc, current_mc, multiplier, call_time, video_file_id, status ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) """, (
         kol_username,
         kol_link,
         project_name,
@@ -334,12 +234,7 @@ def get_live_calls():
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute("""
-        SELECT *
-        FROM calls
-        WHERE status = 'live'
-        ORDER BY created_at DESC
-    """)
+    cursor.execute(""" SELECT * FROM calls WHERE status = 'live' ORDER BY created_at DESC """)
 
     calls = cursor.fetchall()
 
@@ -352,10 +247,7 @@ def get_live_calls():
 # SEARCH KOL CALLS
 # =========================================================
 
-def get_calls_for_kol_after_verification(
-    kol_username,
-    verified_at
-):
+def get_calls_for_kol_after_verification( kol_username, verified_at ):
 
     kol_username = normalize_channel_username(
         kol_username
@@ -364,15 +256,7 @@ def get_calls_for_kol_after_verification(
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute("""
-        SELECT *
-        FROM calls
-        WHERE LOWER(
-            REPLACE(kol_username, '@', '')
-        ) = ?
-        AND created_at >= ?
-        ORDER BY created_at DESC
-    """, (
+    cursor.execute(""" SELECT * FROM calls WHERE LOWER( REPLACE(kol_username, '@', '') ) = ? AND created_at >= ? ORDER BY created_at DESC """, (
         kol_username,
         verified_at,
     ))
@@ -388,25 +272,16 @@ def get_calls_for_kol_after_verification(
 # UPDATE CALL MULTIPLIER
 # =========================================================
 
-def update_call_multiplier(
-    call_id,
-    current_mc,
-    multiplier
-):
+def update_call_multiplier( call_id, current_mc, multiplier ):
 
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute("""
-        UPDATE calls
-        SET current_mc = ?,
-            multiplier = ?
-        WHERE id = ?
-    """, (
+    cursor.execute(""" UPDATE calls SET current_mc = ?, multiplier = ? WHERE id = ? """, (
         current_mc,
         multiplier,
         call_id,
     ))
 
     conn.commit()
-    conn.close() 
+    conn.close()  
