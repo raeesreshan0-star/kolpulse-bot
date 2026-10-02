@@ -47,7 +47,6 @@ jobs:
         run: python -m pip install -r requirements.txt
 
       - name: Run KOLPulse Bot
-        continue-on-error: true
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           GROUP_CHAT_ID: ${{ secrets.GROUP_CHAT_ID }}
@@ -59,7 +58,7 @@ jobs:
           PREMIUM_EMOJI_KOL: ${{ secrets.PREMIUM_EMOJI_KOL }}
           PREMIUM_EMOJI_BOT: ${{ secrets.PREMIUM_EMOJI_BOT }}
           PYTHONUNBUFFERED: "1"
-        run: timeout --kill-after=30s 5h30m python -u bot.py
+        run: python -u bot.py
 
       - name: Save KOLPulse database
         if: always()
@@ -69,9 +68,3 @@ jobs:
           path: kolpulse.db
           if-no-files-found: warn
           retention-days: 90
-
-      - name: Restart KOLPulse automatically
-        if: ${{ always() && !cancelled() }}
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: gh workflow run bot.yml --ref main  
