@@ -62,15 +62,14 @@ TOP_KOLS_LIMIT = 3
 # Minimum X milestone that should trigger a pump alert.
 # Can be changed at runtime with: /setmilestone 2
 MIN_PUMP_MILESTONE = 2
+MAX_PUMP_MILESTONE = 1000
 
 # =========================================================
 # KOLPulseLive PREMIUM CUSTOM EMOJIS
 # =========================================================
-PREMIUM_CALL_EMOJI_ID = "6192617648488980644"
-PREMIUM_KOL_EMOJI_ID = "6192905389822978354"
-PREMIUM_HIT_2X_EMOJI_ID = "6192905389822978354"
-PREMIUM_CA_EMOJI_ID = "5258477770735885832"
-PREMIUM_BOT_EMOJI_ID = "5258093637450866522"
+PREMIUM_CALL_EMOJI_ID = "6044119257308995249"
+PREMIUM_KOL_EMOJI_ID = "6217412791041528130"
+PREMIUM_HIT_2X_EMOJI_ID = "6221788387758578190"
 
 # Network emoji IDs supplied by the owner, in the same order supplied:
 # SOL, BASE, BSC, ETH, ARB, POLY, AVAX, OP, ZKSYNC, LINEA, RH.
@@ -634,11 +633,6 @@ def clear_pending_milestone_video_request(user_id):
     conn.close()
 
 
-# SPECIAL MILESTONE VIDEO SLOT
-# 0 = one universal milestone video used for every X from 2X to 1000X.
-UNIVERSAL_MILESTONE_VIDEO = 0
-
-
 def save_milestone_video(milestone, file_id, video_type="video"):
 
     now = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
@@ -646,19 +640,7 @@ def save_milestone_video(milestone, file_id, video_type="video"):
     conn = get_connection()
     cursor = conn.cursor()
 
-    # Save the uploaded video as the universal milestone video.
-    # The same Telegram file_id is reused for 2X, 3X, 4X ... 1000X.
-    cursor.execute(
-        """ INSERT OR REPLACE INTO saved_milestone_videos (milestone, file_id, video_type, created_at, updated_at) VALUES ( ?, ?, ?, COALESCE( (SELECT created_at FROM saved_milestone_videos WHERE milestone = ?), ? ), ? ) """,
-        (
-            UNIVERSAL_MILESTONE_VIDEO,
-            file_id,
-            video_type,
-            UNIVERSAL_MILESTONE_VIDEO,
-            now,
-            now,
-        ),
-    )
+    cursor.execute(""" INSERT OR REPLACE INTO saved_milestone_videos (milestone, file_id, video_type, created_at, updated_at) VALUES ( ?, ?, ?, COALESCE( (SELECT created_at FROM saved_milestone_videos WHERE milestone = ?), ? ), ? ) """, (milestone, file_id, video_type, milestone, now, now))
 
     conn.commit()
     conn.close()
@@ -669,20 +651,15 @@ def get_milestone_video(milestone):
     conn = get_connection()
     cursor = conn.cursor()
 
-    # Exact milestone is checked first in case an old database contains one.
-    cursor.execute(
-        """ SELECT file_id, video_type FROM saved_milestone_videos WHERE milestone = ? LIMIT 1 """,
-        (milestone,),
-    )
+    # First use a dedicated video for this exact milestone.
+    cursor.execute(""" SELECT file_id, video_type FROM saved_milestone_videos WHERE milestone = ? LIMIT 1 """, (milestone,))
 
     row = cursor.fetchone()
 
+    # If there is no dedicated video, use the universal video saved
+    # under milestone 0 for every 2X..1000X alert.
     if not row:
-        # Universal video: same video for every milestone 2X..1000X.
-        cursor.execute(
-            """ SELECT file_id, video_type FROM saved_milestone_videos WHERE milestone = ? LIMIT 1 """,
-            (UNIVERSAL_MILESTONE_VIDEO,),
-        )
+        cursor.execute(""" SELECT file_id, video_type FROM saved_milestone_videos WHERE milestone = 0 LIMIT 1 """)
         row = cursor.fetchone()
 
     conn.close()
@@ -1524,11 +1501,6 @@ async def show_project_profile(update, project_key):
     )
 
     total_calls = len(rows)
-    total_channels = len({
-        normalize_channel(row[1])
-        for row in rows
-        if row[1]
-    })
     best_row = None
     best_x = 0.0
     best_roi = 0.0
@@ -1584,8 +1556,7 @@ async def show_project_profile(update, project_key):
             f"{html.escape(str(best_row[1] if best_row else 'N/A'))} "
             f"({best_x:.2f}x)\n"
             f"👑 Highest Impact: <b>{best_roi:.1f}%</b>\n\n"
-            f"<b>Total Calls Detected: {total_calls}</b>\n"
-            f"<b>Total Channels Promoted: {total_channels}</b>\n\n"
+            f"<b>Total Calls Detected: {total_calls}</b>\n\n"
         )
     ]
 
@@ -1677,7 +1648,7 @@ async def show_project_profile(update, project_key):
             kol_url = f"{BOT_LINK}?start=kol_{kol_start}"
             safe_kol_url = html.escape(kol_url, quote=True)
             inline_links.append(
-                f'<a href="{safe_kol_url}">🔮 KOL Stats</a>'
+                f'<a href="{safe_kol_url}">{tg_custom_emoji(PREMIUM_KOL_EMOJI_ID, "🎤")} KOL Stats</a>'
             )
 
         if inline_links:
@@ -3063,29 +3034,22 @@ def get_tracking_calls():
 # MILESTONE CALCULATION
 # =========================================================
 
-def get_pump_milestone( multiplier ):
+def get_pump_milestone(multiplier):
 
     if multiplier is None:
-
         return 1
 
     try:
-
-        multiplier = float(
-            multiplier
-        )
-
+        multiplier = float(multiplier)
     except Exception:
-
         return 1
 
-    if multiplier < MIN_PUMP_MILESTONE:
-
+    # Milestone alerts always begin at 2X and continue through 1000X.
+    # Values below 2X are not milestone hits.
+    if multiplier < 2:
         return 1
 
-    return int(
-        multiplier
-    )
+    return min(int(multiplier), MAX_PUMP_MILESTONE)
 
 
 # =========================================================
@@ -3130,8 +3094,9 @@ async def setmilestone( update: Update, context: ContextTypes.DEFAULT_TYPE ):
             "⚙️ Current minimum milestone: "
             f"{MIN_PUMP_MILESTONE}X\n\n"
             "Usage:\n"
-            "/setmilestone 2\n\n"
-            "For 2X → 1000X alerts, use /setmilestone 2."
+            "/setmilestone 2\n"
+            "/setmilestone 3\n"
+            "/setmilestone 5"
         )
 
         return
@@ -3174,27 +3139,17 @@ async def setmilestone( update: Update, context: ContextTypes.DEFAULT_TYPE ):
 
         return
 
-    MIN_PUMP_MILESTONE = milestone
+    # Milestone detection is fixed at 2X..1000X. The command is used
+    # to upload the universal milestone video, not to disable lower X hits.
+    MIN_PUMP_MILESTONE = 2
 
-    # IMPORTANT: /setmilestone controls the pump threshold only.
-    # It does NOT save/replace the normal promotional-call video.
-    # Instead, it asks for a dedicated video for this milestone.
-    # Keep the pending milestone in both SQLite and the current private
-    # session. The DB survives restarts; user_data makes the video handler
-    # unambiguous in the same chat/session.
-    set_pending_milestone_video_request(
-        user_id,
-        MIN_PUMP_MILESTONE
-    )
-    context.user_data["pending_milestone_video"] = MIN_PUMP_MILESTONE
+    set_pending_milestone_video_request(user_id, 0)
 
     await update.message.reply_text(
-        "✅ Milestone setting updated!\n\n"
-        f"🚀 Minimum pump alert: {MIN_PUMP_MILESTONE}X\n\n"
+        "✅ Milestone tracking is fixed at 2X → 1000X.\n\n"
         "🎥 Now send ONE milestone video.\n"
-        f"🚀 It will be used for every milestone from {MIN_PUMP_MILESTONE}X up to 1000X.\n"
-        "⚠️ This video will NOT replace the normal promotional-call video.\n\n"
-        "📌 Send the video as a Telegram video message."
+        "📌 The same video will be reused for every milestone from 2X to 1000X.\n"
+        "⚠️ Your normal promotional-call video will NOT be changed."
     )
 
 
@@ -3204,66 +3159,66 @@ async def setmilestone( update: Update, context: ContextTypes.DEFAULT_TYPE ):
 
 async def send_pump_alert( context, call_id, kol_username, project_name, call_mc, current_mc, multiplier, milestone, original_call_link, kol_link, contract ):
 
-    # The X-milestone alert uses normal Unicode emojis only.
-    # Click targets:
-    # 1) @KOL -> opens the original promotion channel
-    # 2) PROJECT -> opens this project's profile inside KOLPulse
-    # 3) Call -> opens the exact original post that made the milestone
-    # 4) KOL -> opens the KOL's full stats/profile inside the bot
-    # 5) Bot -> opens KOLPulse
+    safe_kol = html.escape(
+        kol_username or "@KOL"
+    )
 
-    channel_username = str(kol_username or "@KOL").strip()
-    if not channel_username.startswith("@"):
-        channel_username = "@" + channel_username
+    safe_project = html.escape(
+        project_name or "$TOKEN"
+    )
 
-    safe_kol = html.escape(channel_username)
-    safe_project = html.escape(str(project_name or "$TOKEN"))
-    safe_contract = html.escape(str(contract or "N/A"))
+    safe_contract = html.escape(
+        contract or "N/A"
+    )
 
-    # Real Telegram promotion channel link.
-    promo_channel_url = "https://t.me/" + channel_username.lstrip("@")
+    call_mc_text = format_market_cap(
+        call_mc
+    )
 
-    # Project profile and KOL profile are bot deep-links.
-    project_url = _project_deep_link(project_name, contract)
-    kol_start = urllib.parse.quote(channel_username.lstrip("@"), safe="")
-    kol_profile_url = f"{BOT_LINK}?start=kol_{kol_start}"
-
-    safe_promo_url = html.escape(promo_channel_url, quote=True)
-    safe_project_url = html.escape(project_url, quote=True)
-    safe_kol_profile_url = html.escape(kol_profile_url, quote=True)
-    safe_call_url = html.escape(str(original_call_link or ""), quote=True)
-    safe_bot_url = html.escape(BOT_LINK, quote=True)
-
-    call_mc_text = format_market_cap(call_mc)
-    current_mc_text = format_market_cap(current_mc)
+    current_mc_text = format_market_cap(
+        current_mc
+    )
 
     alert_text = (
-        f"🟪 <b>MULTIPLIER DETECTED: {milestone}x+</b>\n\n"
-        f'<a href="{safe_promo_url}">{safe_kol}</a> '
-        f"made {milestone}x+ on "
-        f'<a href="{safe_project_url}"><b>{safe_project}</b></a>.\n\n'
-        f"{call_mc_text} ⮕ {current_mc_text}\n\n"
-        f'<a href="{safe_call_url}">🔎 Call❕</a> '
-        f'<a href="{safe_kol_profile_url}">💍 KOL❕</a> '
-        f'<a href="{safe_bot_url}">✨ Bot</a>'
+
+        f"🚀 <b>{milestone}X PUMP HIT!</b>\n\n"
+
+        f"🔮 <b>{safe_project}</b>\n"
+
+        f"👤 KOL: "
+        f"<a href=\"{kol_link}\">"
+        f"{safe_kol}"
+        f"</a>\n\n"
+
+        f"💰 Call MC: "
+        f"{call_mc_text}\n"
+
+        f"📈 Current MC: "
+        f"{current_mc_text}\n"
+
+        f"🚀 Performance: "
+        f"<b>{multiplier:.2f}X</b>\n\n"
+
+        f"CA: <code>"
+        f"{safe_contract}"
+        f"</code>\n\n"
+
+        f"🔎 <a href=\"{original_call_link}\">"
+        f"CALL"
+        f"</a> "
+
+        f"👤 <a href=\"{kol_link}\">"
+        f"KOL"
+        f"</a> "
+
+        f"🤖 <a href=\"{BOT_LINK}\">"
+        f"BOT"
+        f"</a>"
     )
 
     try:
 
-        # IMPORTANT:
-        # A milestone video is NEVER a promotional-call video.
-        # One universal milestone video can be reused for every X from
-        # 2X through 1000X. The alert text itself shows the actual
-        # detected milestone (2X, 3X, 4X ... 1000X).
         milestone_video = get_milestone_video(milestone)
-        video_source_milestone = milestone
-
-        print(
-            f"🎥 Milestone video lookup | detected={milestone}X | "
-            f"configured={MIN_PUMP_MILESTONE}X | "
-            f"source={video_source_milestone}X | "
-            f"found={'YES' if milestone_video else 'NO'}"
-        )
 
         if milestone_video:
 
@@ -3287,12 +3242,14 @@ async def send_pump_alert( context, call_id, kol_username, project_name, call_mc
             save_call_video(call_id, video_file_id)
 
             print(
-                f"🚀 {milestone}X ALERT + {video_source_milestone}X "
-                f"milestone video SENT for call #{call_id}"
+                f"🚀 {milestone}X ALERT + milestone video SENT "
+                f"for call #{call_id}"
             )
 
         else:
 
+            # No dedicated milestone video has been saved yet.
+            # Keep the existing text-only fallback.
             await context.bot.send_message(
                 chat_id=LIVE_CHANNEL,
                 text=alert_text,
@@ -3454,7 +3411,7 @@ async def update_one_tracked_call( context, row ):
     )
 
     if (
-        milestone >= MIN_PUMP_MILESTONE
+        milestone >= 2
         and milestone > old_last_milestone
     ):
 
@@ -4297,36 +4254,34 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
     # -----------------------------------------------------
     # DUPLICATE CALL PROTECTION
     # -----------------------------------------------------
-    # There is NO per-channel or total-call limit.
-    #
-    # The same KOL may promote the same contract multiple times. Each
-    # distinct Telegram channel post is a separate detectable call.
-    #
-    # We only ignore the exact same Telegram post URL, which protects
-    # against Telegram delivering the same update more than once.
-    if original_call_link:
+    # Same KOL + same contract = same promotion. Ignore repeats.
+    # Different KOLs can still promote the same contract.
+    clean_kol = normalize_channel(channel).lstrip("@").lower()
+    clean_contract = str(contract or "").strip().lower()
+
+    if clean_kol and clean_contract:
         try:
             conn = get_connection()
             cursor = conn.cursor()
             cursor.execute(
-                """ SELECT id FROM calls WHERE original_call_link = ? ORDER BY id ASC LIMIT 1 """,
-                (original_call_link,),
+                """ SELECT id FROM calls WHERE LOWER(REPLACE(kol_username, '@', '')) = ? AND LOWER(TRIM(COALESCE(contract, ''))) = ? ORDER BY id ASC LIMIT 1 """,
+                (clean_kol, clean_contract),
             )
             duplicate_row = cursor.fetchone()
             conn.close()
 
             if duplicate_row:
                 print(
-                    "⏭️ DUPLICATE TELEGRAM POST IGNORED | "
-                    f"Channel: {channel} | "
-                    f"Post: {original_call_link} | "
+                    "⏭️ DUPLICATE CALL IGNORED | "
+                    f"KOL: {channel} | "
+                    f"Contract: {contract} | "
                     f"Existing Call ID: {duplicate_row[0]}"
                 )
                 return
 
         except Exception as error:
             print(
-                "⚠️ Exact-post duplicate check failed; "
+                "⚠️ Duplicate check failed; "
                 f"continuing with call: {type(error).__name__}: {error}"
             )
 
@@ -4459,43 +4414,29 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
         call_url = html.escape(original_call_link, quote=True)
         bot_url = html.escape(BOT_LINK, quote=True)
 
-        # CALL ALERT layout intentionally matches the requested Telegram design:
-        # chain premium emoji -> CALL ALERT -> KOL -> called-at-MC line ->
-        # tracking text -> CA -> premium CALL/KOL buttons -> BOT.
-        safe_kol = html.escape(
-            channel.lstrip("@")
-        )
-        safe_call_channel = html.escape(
-            channel
-        )
-
-        # The first line is PROJECT-first: the project nickname is clickable
-        # and opens the bot project profile. The KOL/channel name is shown
-        # on the next line where the original call can be opened.
-        safe_project_name = html.escape(
-            str(project_name or token_symbol or "$TOKEN")
-        )
-
         alert_text = (
             f'{chain_emoji} <b>CALL ALERT:</b> '
-            f'<a href="{project_url}"><b>{safe_project_name}</b></a> '
-            f'🔮\n\n'
+            f'<a href="{project_url}">'
+            f'{html.escape(str(project_name or "$TOKEN"))}</a>\n\n'
 
-            f'<a href="{call_url}">{safe_call_channel}</a> '
-            f'just called at {mc_display}.\n\n'
+            f'{chain_emoji} '
+            f'<a href="{project_url}">{safe_token}</a>\n'
+            f'💰 <b>Call MC:</b> {mc_display}\n'
+            f'⛓️ <b>Chain:</b> {safe_chain}\n\n'
 
-            "We've started tracking it and will send performance alerts "
+            "We've started tracking it and "
+            "will send performance alerts "
             "when new X milestones are reached.\n\n"
 
-            f'{tg_custom_emoji(PREMIUM_CA_EMOJI_ID, "📋")} CA: <code>{safe_contract}</code>\n\n'
+            f'CA: <code>{safe_contract}</code>\n\n'
 
             f'<a href="{call_url}">'
-            f'{tg_custom_emoji(PREMIUM_CALL_EMOJI_ID, "🔎")} View Call</a> '
+            f'{tg_custom_emoji(PREMIUM_CALL_EMOJI_ID, "🔎")} CALL</a> '
 
             f'<a href="{kol_url}">'
-            f'🔮 KOL Stats</a> '
+            f'{tg_custom_emoji(PREMIUM_KOL_EMOJI_ID, "🎤")} KOL</a> '
 
-            f'<a href="{bot_url}">{tg_custom_emoji(PREMIUM_BOT_EMOJI_ID, "🤖")} BOT</a>'
+            f'<a href="{bot_url}">🤖 BOT</a>'
         )
 
 
@@ -5410,17 +5351,7 @@ async def promotional_video_handler( update: Update, context: ContextTypes.DEFAU
     # If /setmilestone was just used, this video belongs ONLY
     # to that pump milestone. It must never overwrite the normal
     # promotional-call video.
-    # Milestone video has absolute priority over the normal promotional
-    # video. Check the active session first, then the persistent DB.
-    pending_milestone = context.user_data.get("pending_milestone_video")
-    if pending_milestone is None:
-        pending_milestone = get_pending_milestone_video_request(user_id)
-
-    if pending_milestone is not None:
-        try:
-            pending_milestone = int(pending_milestone)
-        except (TypeError, ValueError):
-            pending_milestone = None
+    pending_milestone = get_pending_milestone_video_request(user_id)
 
     if pending_milestone is not None:
 
@@ -5444,13 +5375,18 @@ async def promotional_video_handler( update: Update, context: ContextTypes.DEFAU
             )
 
             clear_pending_milestone_video_request(user_id)
-            context.user_data.pop("pending_milestone_video", None)
 
             await message.reply_text(
-                f"✅ {pending_milestone}X milestone video saved!\n\n"
-                "🚀 This same video will be used for every pump milestone "
-                f"from {pending_milestone}X up to 1000X.\n"
-                "📌 Your normal promotional-call video was NOT changed."
+                (
+                    "✅ Universal milestone video saved!\n\n"
+                    "🚀 This same video will be used for every 2X → 1000X milestone alert.\n"
+                    "📌 Your normal promotional-call video was NOT changed."
+                    if int(pending_milestone) == 0
+                    else
+                    f"✅ {pending_milestone}X milestone video saved!\n\n"
+                    f"🚀 Every new {pending_milestone}X pump alert will use this video.\n"
+                    "📌 Your normal promotional-call video was NOT changed."
+                )
             )
 
             print(
@@ -5607,11 +5543,6 @@ def main():
     )
 
     print(
-        "♾️ Call detection limit: UNLIMITED "
-        "(every distinct Telegram post can be tracked)"
-    )
-
-    print(
         "📡 Raven-only restriction: DISABLED"
     )
 
@@ -5734,4 +5665,4 @@ def main():
 
 if __name__ == "__main__":
 
-    main()   
+    main()
