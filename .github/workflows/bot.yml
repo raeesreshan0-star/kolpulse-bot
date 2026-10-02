@@ -10,9 +10,11 @@ permissions:
   contents: read
   actions: write
 
+# Only one KOLPulse bot may run at a time.
+# When new code is pushed, the old bot run is cancelled automatically.
 concurrency:
   group: kolpulse-bot
-  cancel-in-progress: false
+  cancel-in-progress: true
 
 jobs:
   run-bot:
@@ -30,6 +32,8 @@ jobs:
       - name: Install dependencies
         run: python -m pip install -r requirements.txt
 
+      # Restore the newest available KOLPulse database for this branch.
+      # The run_id makes each saved cache unique so a newer database can be saved.
       - name: Restore KOLPulse database
         uses: actions/cache@v4
         with:
@@ -52,14 +56,15 @@ jobs:
           PREMIUM_EMOJI_KOL: "${{ secrets.PREMIUM_EMOJI_KOL }}"
           PREMIUM_EMOJI_BOT: "${{ secrets.PREMIUM_EMOJI_BOT }}"
           PYTHONUNBUFFERED: "1"
-        run: timeout --signal=TERM --kill-after=30s 19800s python -u bot.py
-
+        run: | timeout --signal=TERM --kill-after=30s 19800s python -u bot.py status=$? if [ "$status" -eq 124 ]; then echo "Bot reached the 5.5 hour runtime limit; starting a fresh run." exit 0 fi exit "$status" 
       - name: Confirm database
         if: always()
         run: 'if [ -f kolpulse.db ]; then echo "Database file exists"; ls -lh kolpulse.db; else echo "WARNING: kolpulse.db was not found"; fi'
 
+      # Continue automatically only when the bot ended normally or reached
+      # the runtime limit. A cancelled old run must not create another run.
       - name: Start next run automatically
-        if: always()
+        if: ${{ success() }}
         env:
           GH_TOKEN: "${{ github.token }}"
         run: gh workflow run bot.yml --ref main
