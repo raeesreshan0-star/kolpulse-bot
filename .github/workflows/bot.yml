@@ -24,13 +24,12 @@ jobs:
           python-version: "3.11"
 
       - name: Install dependencies
-        run: python -m pip install --upgrade pip && pip install -r requirements.txt
-
+        run: | python -m pip install --upgrade pip pip install -r requirements.txt 
       - name: Restore KOLPulse database
         uses: actions/cache@v4
         with:
           path: kolpulse.db
-          key: kolpulse-db-${{ github.ref_name }}
+          key: kolpulse-db-${{ github.ref_name }}-${{ github.run_id }}
           restore-keys: | kolpulse-db-${{ github.ref_name }}- 
       - name: Check database
         run: | if [ -f kolpulse.db ]; then echo "KOLPulse database restored." ls -lh kolpulse.db else echo "No existing database found. A new database will be created." fi 
@@ -46,7 +45,7 @@ jobs:
           PREMIUM_EMOJI_KOL: "${{ secrets.PREMIUM_EMOJI_KOL }}"
           PREMIUM_EMOJI_BOT: "${{ secrets.PREMIUM_EMOJI_BOT }}"
           PYTHONUNBUFFERED: "1"
-        run: | timeout --signal=TERM --kill-after=10s 5h 50m python bot.py         continue-on-error: true
+        run: | timeout --signal=TERM --kill-after=10s 5h50m python bot.py         continue-on-error: true
 
       - name: Confirm database
         if: always()
@@ -62,4 +61,4 @@ jobs:
         if: always()
         env:
           GH_TOKEN: "${{ github.token }}"
-        run: | gh workflow run bot.yml --ref main
+        run: | gh workflow run bot.yml --ref main  
