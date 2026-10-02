@@ -543,31 +543,14 @@ def get_video_request_owner():
 
 def bootstrap_saved_promotional_video_from_calls():
 
-    # If an earlier version already saved a promotional video
-    # against a call, promote the newest one to the global
-    # reusable video automatically. This prevents the bot from
-    # asking for the same video again after this update.
-
-    if get_saved_promotional_video():
-        return
-
-    conn = get_connection()
-    cursor = conn.cursor()
-
-    cursor.execute(""" SELECT video_file_id FROM calls WHERE video_file_id IS NOT NULL AND TRIM(video_file_id) <> '' ORDER BY id DESC LIMIT 1 """)
-
-    row = cursor.fetchone()
-    conn.close()
-
-    if row and row[0]:
-        save_promotional_video(
-            row[0],
-            "video"
-        )
-        print(
-            "♻️ Existing call video promoted to the global "
-            "reusable promotional video."
-        )
+    # Promotional-call video and milestone videos are intentionally
+    # stored separately. Never infer the global promotional video
+    # from calls.video_file_id because older versions could have
+    # written a milestone video there.
+    #
+    # If no global promotional video exists, the normal video handler
+    # will request one from the owner.
+    return
 
 
 def get_saved_promotional_video():
@@ -3234,10 +3217,10 @@ async def send_pump_alert( context, call_id, kol_username, project_name, call_mc
                     parse_mode="HTML",
                 )
 
-            save_call_video(call_id, video_file_id)
-
+            # IMPORTANT: milestone videos are dedicated to their exact milestone.
+            # Never overwrite the normal promotional-call video stored on the call.
             print(
-                f"🚀 {milestone}X ALERT + milestone video SENT "
+                f"🚀 {milestone}X ALERT + dedicated milestone video SENT "
                 f"for call #{call_id}"
             )
 
@@ -5708,4 +5691,4 @@ def main():
 
 if __name__ == "__main__":
 
-    main() 
+    main()  
