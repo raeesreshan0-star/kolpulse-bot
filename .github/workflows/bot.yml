@@ -1,82 +1,91 @@
-name: Checkout repository
-    uses: actions/checkout@v4
+name: KOLPulse Bot
 
-  # ============================================================
-  # RESTORE DATABASE FROM THE LAST SUCCESSFUL RUN
-  # ============================================================
-  # If there is no previous database artifact yet, the bot simply
-  # starts with a fresh database.
-  - name: Restore KOLPulse database
-    id: restore_db
-    continue-on-error: true
-    uses: step-security/action-download-artifact@v11
-    with:
-      github_token: ${{ secrets.GITHUB_TOKEN }}
-      workflow: bot.yml
-      branch: main
-      workflow_conclusion: success
-      name: kolpulse-db
-      path: .
-      search_artifacts: true
-      check_artifacts: true
+on:
+  workflow_dispatch:
+  push:
+    branches:
+      - main
 
-  - name: Check database
-    run: |
-      if [ -f kolpulse.db ]; then
-        echo "KOLPulse database restored successfully."
-        ls -lh kolpulse.db
-      else
-        echo "No previous kolpulse.db artifact found."
-        echo "Bot will create a new database."
-      fi
+concurrency:
+  group: kolpulse-bot
+  cancel-in-progress: true
 
-  - name: Setup Python
-    uses: actions/setup-python@v5
-    with:
-      python-version: "3.11"
+permissions:
+  contents: read
+  actions: write
 
-  - name: Install dependencies
-    run: python -m pip install -r requirements.txt
+jobs:
+  run-bot:
+    runs-on: ubuntu-latest
 
-  # ============================================================
-  # RUN BOT FOR 5H30M
-  # ============================================================
-  - name: Run KOLPulse Bot
-    continue-on-error: true
-    env:
-      BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-      GROUP_CHAT_ID: ${{ secrets.GROUP_CHAT_ID }}
-      OWNER_USER_ID: ${{ secrets.OWNER_USER_ID }}
-      PROMOTIONAL_VIDEO_FILE_ID: ${{ secrets.PROMOTIONAL_VIDEO_FILE_ID }}
-      PREMIUM_EMOJI_CALL: ${{ secrets.PREMIUM_EMOJI_CALL }}
-      PREMIUM_EMOJI_PLANE: ${{ secrets.PREMIUM_EMOJI_PLANE }}
-      PREMIUM_EMOJI_CONTRACT: ${{ secrets.PREMIUM_EMOJI_CONTRACT }}
-      PREMIUM_EMOJI_KOL: ${{ secrets.PREMIUM_EMOJI_KOL }}
-      PREMIUM_EMOJI_BOT: ${{ secrets.PREMIUM_EMOJI_BOT }}
-      PYTHONUNBUFFERED: "1"
-    run: timeout --kill-after=30s 5h30m python -u bot.py
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
 
-  # ============================================================
-  # SAVE DATABASE BEFORE RESTART
-  # ============================================================
-  - name: Save KOLPulse database
-    if: always()
-    uses: actions/upload-artifact@v4
-    with:
-      name: kolpulse-db
-      path: kolpulse.db
-      if-no-files-found: warn
-      retention-days: 90
+      # ============================================================
+      # RESTORE DATABASE FROM THE LAST SUCCESSFUL RUN
+      # ============================================================
+      # If there is no previous database artifact yet, the bot simply
+      # starts with a fresh database.
+      - name: Restore KOLPulse database
+        id: restore_db
+        continue-on-error: true
+        uses: step-security/action-download-artifact@v11
+        with:
+          github_token: ${{ secrets.GITHUB_TOKEN }}
+          workflow: bot.yml
+          branch: main
+          workflow_conclusion: success
+          name: kolpulse-db
+          path: .
+          search_artifacts: true
+          check_artifacts: true
 
-  # ============================================================
-  # AUTOMATIC 5H30M RESTART
-  # ============================================================
-  - name: Restart KOLPulse automatically
-    if: always()
-    env:
-      GH_TOKEN: ${{ github.token }}
-    run: |
-      echo "Starting the next KOLPulse Bot run..."
-      sleep 10
-      gh workflow run bot.yml --ref main
-      echo "Next KOLPulse Bot run dispatched successfully.
+      - name: Check database
+        run: | if [ -f kolpulse.db ]; then echo "KOLPulse database restored successfully." ls -lh kolpulse.db else echo "No previous kolpulse.db artifact found." echo "Bot will create a new database." fi 
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.11"
+
+      - name: Install dependencies
+        run: python -m pip install -r requirements.txt
+
+      # ============================================================
+      # RUN BOT FOR 5H30M
+      # ============================================================
+      - name: Run KOLPulse Bot
+        continue-on-error: true
+        env:
+          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
+          GROUP_CHAT_ID: ${{ secrets.GROUP_CHAT_ID }}
+          OWNER_USER_ID: ${{ secrets.OWNER_USER_ID }}
+          PROMOTIONAL_VIDEO_FILE_ID: ${{ secrets.PROMOTIONAL_VIDEO_FILE_ID }}
+          PREMIUM_EMOJI_CALL: ${{ secrets.PREMIUM_EMOJI_CALL }}
+          PREMIUM_EMOJI_PLANE: ${{ secrets.PREMIUM_EMOJI_PLANE }}
+          PREMIUM_EMOJI_CONTRACT: ${{ secrets.PREMIUM_EMOJI_CONTRACT }}
+          PREMIUM_EMOJI_KOL: ${{ secrets.PREMIUM_EMOJI_KOL }}
+          PREMIUM_EMOJI_BOT: ${{ secrets.PREMIUM_EMOJI_BOT }}
+          PYTHONUNBUFFERED: "1"
+        run: timeout --kill-after=30s 5h30m python -u bot.py
+
+      # ============================================================
+      # SAVE DATABASE BEFORE RESTART
+      # ============================================================
+      - name: Save KOLPulse database
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: kolpulse-db
+          path: kolpulse.db
+          if-no-files-found: warn
+          retention-days: 90
+
+      # ============================================================
+      # AUTOMATIC 5H30M RESTART
+      # ============================================================
+      - name: Restart KOLPulse automatically
+        if: always()
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: | echo "Starting the next KOLPulse Bot run..." sleep 10 gh workflow run bot.yml --ref main echo "Next KOLPulse Bot run dispatched successfully."
