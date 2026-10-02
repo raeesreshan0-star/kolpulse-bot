@@ -52,7 +52,7 @@ if not OWNER_USER_ID:
 
 DEX_API_BASE = "https://api.dexscreener.com"
 
-TRACK_INTERVAL_SECONDS = 60
+TRACK_INTERVAL_SECONDS = 10
 
 # Top KOLs board: the same channel post is refreshed every 3 days.
 TOP_KOLS_ROTATION_SECONDS = 3 * 24 * 60 * 60
@@ -3383,19 +3383,16 @@ async def update_one_tracked_call( context, row ):
 
         old_last_milestone = 1
 
-    new_last_milestone = max(
-        old_last_milestone,
-        milestone
-    )
-
+    # Save the live MC/ATH first, but DO NOT advance last_milestone yet.
+    # The old implementation advanced the milestone before sending the alert,
+    # which could permanently skip an alert if Telegram sending failed.
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(""" UPDATE calls SET current_mc = ?, multiplier = ?, ath_mc = ?, last_milestone = ? WHERE id = ? """, (
+    cursor.execute(""" UPDATE calls SET current_mc = ?, multiplier = ?, ath_mc = ? WHERE id = ? """, (
         current_mc,
         multiplier,
         new_ath_mc,
-        new_last_milestone,
         call_id,
     ))
 
@@ -3410,37 +3407,53 @@ async def update_one_tracked_call( context, row ):
         f"ATH {format_market_cap(new_ath_mc)}"
     )
 
-    if (
-        milestone >= 2
-        and milestone > old_last_milestone
-    ):
+    # IMPORTANT: if MC jumps from e.g. 1.6X straight to 5.2X,
+    # do not lose 2X/3X/4X. Queue every crossed integer milestone.
+    if milestone >= 2 and milestone > old_last_milestone:
 
-        await send_pump_alert(
+        start_milestone = max(2, old_last_milestone + 1)
+        end_milestone = min(milestone, MAX_PUMP_MILESTONE)
 
-            context=context,
+        for crossed_milestone in range(start_milestone, end_milestone + 1):
 
-            call_id=call_id,
+            try:
+                await send_pump_alert(
+                    context=context,
+                    call_id=call_id,
+                    kol_username=kol_username,
+                    project_name=project_name,
+                    call_mc=call_mc,
+                    current_mc=current_mc,
+                    multiplier=multiplier,
+                    milestone=crossed_milestone,
+                    original_call_link=original_call_link,
+                    kol_link=kol_link,
+                    contract=contract,
+                )
 
-            kol_username=kol_username,
+                # Only mark this milestone after its alert succeeds.
+                conn = get_connection()
+                cursor = conn.cursor()
+                cursor.execute(
+                    """ UPDATE calls SET last_milestone = ? WHERE id = ? """,
+                    (crossed_milestone, call_id),
+                )
+                conn.commit()
+                conn.close()
 
-            project_name=project_name,
+                print(
+                    f"🚀 MILESTONE {crossed_milestone}X SENT | "
+                    f"CALL #{call_id}"
+                )
 
-            call_mc=call_mc,
-
-            current_mc=current_mc,
-
-            multiplier=multiplier,
-
-            milestone=milestone,
-
-            original_call_link=(
-                original_call_link
-            ),
-
-            kol_link=kol_link,
-
-            contract=contract,
-        )
+            except Exception as error:
+                print(
+                    f"❌ Milestone {crossed_milestone}X alert failed "
+                    f"for call #{call_id}: "
+                    f"{type(error).__name__}: {error}"
+                )
+                # Stop here so the failed milestone is retried on the next cycle.
+                break
 
 
 # =========================================================
