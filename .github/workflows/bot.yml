@@ -47,4 +47,4 @@ jobs:
         if: always()
         env:
           GH_TOKEN: ${{ github.token }}
-        run: | echo "Waiting before starting the next KOLPulse run..." sleep 15 gh workflow run bot.yml --ref main echo "Next KOLPulse run requested."
+        run: | echo "Waiting before starting the next KOLPulse run..." sleep 15 gh workflow run bot.yml --ref main echo "Next KOLPulse run requested."  
