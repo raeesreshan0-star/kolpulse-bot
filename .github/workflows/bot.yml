@@ -1,5 +1,4 @@
-steps:
-  - name: Checkout repository
+name: Checkout repository
     uses: actions/checkout@v4
 
   # ============================================================
@@ -80,4 +79,4 @@ steps:
       echo "Starting the next KOLPulse Bot run..."
       sleep 10
       gh workflow run bot.yml --ref main
-      echo "Next KOLPulse Bot run dispatched successfully."
+      echo "Next KOLPulse Bot run dispatched successfully.
