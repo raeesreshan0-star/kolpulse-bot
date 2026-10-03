@@ -138,6 +138,27 @@ def get_verified_at(channel_username):
     return result[3]
 
 
+def is_verified_channel(channel_username):
+    """Return True when the channel is already in verified_channels."""
+    return get_verified_channel(channel_username) is not None
+
+
+def get_all_verified_channels():
+    """Return all verified channels, newest verification first."""
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(
+        """SELECT id, channel_username, user_id, verified_at
+           FROM verified_channels
+           ORDER BY verified_at DESC"""
+    )
+
+    rows = cursor.fetchall()
+    conn.close()
+    return rows
+
+
 # =========================================================
 # PENDING REQUESTS
 # =========================================================
@@ -151,13 +172,28 @@ def add_pending_channel( channel_username, user_id=None ):
     conn = get_connection()
     cursor = conn.cursor()
 
-    cursor.execute(""" INSERT OR IGNORE INTO channel_requests ( channel_username, user_id, status ) VALUES (?, ?, 'pending') """, (
-        channel_username,
-        user_id,
-    ))
+    # IMPORTANT:
+    # Never create a pending verification request for a channel
+    # that is already verified.
+    cursor.execute(
+        "SELECT 1 FROM verified_channels WHERE channel_username = ? LIMIT 1",
+        (channel_username,)
+    )
+
+    if cursor.fetchone():
+        conn.close()
+        return False
+
+    cursor.execute(
+        """INSERT OR IGNORE INTO channel_requests
+           (channel_username, user_id, status)
+           VALUES (?, ?, 'pending')""",
+        (channel_username, user_id)
+    )
 
     conn.commit()
     conn.close()
+    return True
 
 
 def get_pending_channel(channel_username):
