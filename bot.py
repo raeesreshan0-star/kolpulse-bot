@@ -2573,79 +2573,145 @@ def is_verified_channel(channel):
 # =========================================================
 
 def fetch_dex_chain_sync(contract):
-    """Resolve chain directly from DexScreener when the post does not state it."""
+    """Resolve chain directly from DexScreener using the exact token address."""
     if not contract:
         return None
 
-    encoded_contract = urllib.parse.quote(str(contract).strip(), safe="")
-    api_url = (
-        f"{DEX_API_BASE}/latest/dex/search"
-        f"?q={encoded_contract}"
-    )
+    contract = str(contract).strip()
+    if not contract:
+        return None
+
+    encoded_contract = urllib.parse.quote(contract, safe="")
+
+    # Try the token endpoint first (more reliable than search for raw CAs),
+    # then fall back to DexScreener search.
+    api_urls = [
+        f"{DEX_API_BASE}/latest/dex/tokens/{encoded_contract}",
+        f"{DEX_API_BASE}/latest/dex/search?q={encoded_contract}",
+    ]
+
+    chain_map = {
+        "ethereum": "ETH",
+        "solana": "SOL",
+        "base": "BASE",
+        "bsc": "BSC",
+        "arbitrum": "ARB",
+        "polygon": "POLY",
+        "avalanche": "AVAX",
+        "optimism": "OP",
+        "zksync": "ZKSYNC",
+        "linea": "LINEA",
+        "scroll": "SCROLL",
+        "blast": "BLAST",
+        "sonic": "SONIC",
+        "monad": "MONAD",
+        "hyperevm": "HYPER",
+    }
 
     try:
-        request = urllib.request.Request(
-            api_url,
-            headers={"User-Agent": "KOLPulse/1.0"},
-        )
-
-        with urllib.request.urlopen(request, timeout=12) as response:
-            data = json.loads(response.read().decode("utf-8"))
-
-        pairs = data.get("pairs") if isinstance(data, dict) else []
-        if not isinstance(pairs, list):
-            pairs = []
-
-        chain_map = {
-            "ethereum": "ETH",
-            "solana": "SOL",
-            "base": "BASE",
-            "bsc": "BSC",
-            "arbitrum": "ARB",
-            "polygon": "POLY",
-            "avalanche": "AVAX",
-            "optimism": "OP",
-            "zksync": "ZKSYNC",
-            "linea": "LINEA",
-            "scroll": "SCROLL",
-            "blast": "BLAST",
-            "sonic": "SONIC",
-            "monad": "MONAD",
-            "hyperevm": "HYPER",
-        }
-
-        # Prefer the pair with the strongest liquidity.
-        candidates = []
-        for pair in pairs:
-            if not isinstance(pair, dict):
-                continue
-
-            chain_id = str(pair.get("chainId") or "").strip().lower()
-            if not chain_id:
-                continue
-
-            liquidity = pair.get("liquidity") or {}
+        for api_url in api_urls:
             try:
-                liquidity_usd = float(liquidity.get("usd") or 0)
-            except Exception:
-                liquidity_usd = 0.0
+                request = urllib.request.Request(
+                    api_url,
+                    headers={"User-Agent": "KOLPulse/1.0"},
+                )
 
-            candidates.append((liquidity_usd, chain_id))
+                with urllib.request.urlopen(request, timeout=12) as response:
+                    data = json.loads(response.read().decode("utf-8"))
 
-        candidates.sort(reverse=True)
+                pairs = data.get("pairs") if isinstance(data, dict) else []
+                if not isinstance(pairs, list):
+                    pairs = []
 
-        for _, chain_id in candidates:
-            if chain_id in chain_map:
-                return chain_map[chain_id]
+                if not pairs:
+                    continue
 
-            if chain_id:
-                return chain_id.upper()
+                # First prefer a pair whose base token address is exactly
+                # the CA we are tracking.
+                exact_matches = []
+                for pair in pairs:
+                    if not isinstance(pair, dict):
+                        continue
+
+                    base = pair.get("baseToken") or {}
+                    address = str(base.get("address") or "").strip()
+
+                    if address and address.lower() == contract.lower():
+                        liquidity = pair.get("liquidity") or {}
+                        try:
+                            liquidity_usd = float(liquidity.get("usd") or 0)
+                        except Exception:
+                            liquidity_usd = 0.0
+
+                        chain_id = str(
+                            pair.get("chainId") or ""
+                        ).strip().lower()
+
+                        if chain_id:
+                            exact_matches.append(
+                                (liquidity_usd, chain_id)
+                            )
+
+                exact_matches.sort(reverse=True)
+
+                for _, chain_id in exact_matches:
+                    if chain_id in chain_map:
+                        return chain_map[chain_id]
+                    if chain_id:
+                        return chain_id.upper()
+
+                # Fallback: strongest-liquidity usable pair.
+                candidates = []
+                for pair in pairs:
+                    if not isinstance(pair, dict):
+                        continue
+
+                    chain_id = str(
+                        pair.get("chainId") or ""
+                    ).strip().lower()
+
+                    if not chain_id:
+                        continue
+
+                    liquidity = pair.get("liquidity") or {}
+                    try:
+                        liquidity_usd = float(
+                            liquidity.get("usd") or 0
+                        )
+                    except Exception:
+                        liquidity_usd = 0.0
+
+                    candidates.append(
+                        (liquidity_usd, chain_id)
+                    )
+
+                candidates.sort(reverse=True)
+
+                for _, chain_id in candidates:
+                    if chain_id in chain_map:
+                        return chain_map[chain_id]
+                    if chain_id:
+                        return chain_id.upper()
+
+            except Exception as error:
+                print(
+                    "⚠️ DexScreener chain endpoint failed: "
+                    f"{type(error).__name__}: {error}"
+                )
 
     except Exception as error:
         print(
             "⚠️ DexScreener chain lookup failed: "
             f"{type(error).__name__}: {error}"
         )
+
+    # Last-resort address-shape fallback for Solana CAs.
+    # Solana public addresses are base58 strings, normally 32–44 chars.
+    if re.fullmatch(
+        r"[1-9A-HJ-NP-Za-km-z]{32,44}",
+        contract,
+    ):
+        return "SOL"
 
     return None
 
@@ -4382,25 +4448,30 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
 
     try:
 
-        safe_channel = html.escape(
-            channel
+        # -----------------------------------------------------
+        # CLICKABLE CALL CHANNEL
+        # -----------------------------------------------------
+        # `channel` comes directly from message.chat.username, so the
+        # alert always shows the actual verified channel that made the call.
+        channel_name = str(channel or "").strip().lstrip("@")
+        channel_url = html.escape(
+            f"https://t.me/{channel_name}",
+            quote=True,
+        )
+        safe_channel_name = html.escape(
+            channel_name
         )
 
         safe_token = html.escape(
-            token_symbol
-        )
-
-        safe_contract = html.escape(
-            contract
+            str(token_symbol or project_name or "$TOKEN")
         )
 
         safe_chain = html.escape(
-            chain_symbol
+            str(chain_symbol or "UNKNOWN")
         )
 
         # Keep call_mc FIXED as the historical baseline for X calculations.
         # Fetch a fresh live MC only for what we display in the initial alert.
-        # This prevents the alert from looking "stuck" at the promotion-time MC.
         live_display_mc = await fetch_live_market_cap(
             contract,
             chain_symbol
@@ -4442,42 +4513,14 @@ async def channel_post_handler( update: Update, context: ContextTypes.DEFAULT_TY
         call_mc_display = format_market_cap(call_mc)
         live_mc_display = format_market_cap(live_display_mc)
 
-        chain_emoji = chain_custom_emoji(chain_symbol)
-        project_url = html.escape(
-            _project_deep_link(project_name, contract),
-            quote=True,
-        )
-        kol_url = html.escape(
-            f'{BOT_LINK}?start=kol_{channel.lstrip("@")}',
-            quote=True,
-        )
-        call_url = html.escape(original_call_link, quote=True)
-        bot_url = html.escape(BOT_LINK, quote=True)
-
+        # Exact requested CALL ALERT layout.
+        # The Call Channel name is a real Telegram HTML link.
         alert_text = (
-            f'{chain_emoji} <b>CALL ALERT:</b> '
-            f'<a href="{project_url}">'
-            f'{html.escape(str(project_name or "$TOKEN"))}</a>\n\n'
-
-            f'{chain_emoji} '
-            f'<a href="{project_url}">{safe_token}</a>\n'
-            f'🎯 <b>Call MC:</b> {call_mc_display}\n'
-            f'📈 <b>Live MC:</b> {live_mc_display}\n'
-            f'⛓️ <b>Chain:</b> {safe_chain}\n\n'
-
-            "We've started tracking it and "
-            "will send performance alerts "
-            "when new X milestones are reached.\n\n"
-
-            f'CA: <code>{safe_contract}</code>\n\n'
-
-            f'<a href="{call_url}">'
-            f'{tg_custom_emoji(PREMIUM_CALL_EMOJI_ID, "🔎")} CALL</a> '
-
-            f'<a href="{kol_url}">'
-            f'{tg_custom_emoji(PREMIUM_KOL_EMOJI_ID, "🎤")} KOL</a> '
-
-            f'<a href="{bot_url}">🤖 BOT</a>'
+            f"🐰 <b>CALL ALERT:</b> {safe_token}\n\n"
+            f"🎯 <b>Call MC:</b> {call_mc_display}\n"
+            f"📈 <b>Live MC:</b> {live_mc_display}\n"
+            f"🐰 <b>Chain:</b> {safe_chain}\n"
+            f'📢 <b>Call Channel:</b> <a href="{channel_url}">{safe_channel_name}</a>'
         )
 
 
@@ -5746,4 +5789,4 @@ def main():
 
 if __name__ == "__main__":
 
-    main()  
+    main()   
