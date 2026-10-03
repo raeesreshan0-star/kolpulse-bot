@@ -17,10 +17,17 @@ permissions:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+
+    # 5h30m bot runtime + small safety margin for shutdown/database save.
+    timeout-minutes: 345
+
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Restore the database from the most recent successful KOLPulse run.
+      # This keeps verified channels, promoted calls, project data,
+      # milestone results, KOL stats and all other SQLite data.
       - name: Restore KOLPulse database
         continue-on-error: true
         uses: dawidd6/action-download-artifact@v22
@@ -35,9 +42,9 @@ jobs:
           check_artifacts: true
           if_no_artifact_found: warn
 
-      - name: Check database
-        run: if [ -f kolpulse.db ]; then echo "KOLPulse database restored successfully."; ls -lh kolpulse.db; else echo "No previous kolpulse.db artifact found. Bot will create a new database."; fi
-
+      - name: Verify restored database
+        shell: bash
+        run: | if [ -f kolpulse.db ]; then echo "==========================================" echo "KOLPulse database restored successfully." echo "Existing data will be preserved." ls -lh kolpulse.db echo "==========================================" else echo "No previous database found." echo "A new kolpulse.db will be created by the bot." fi 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -47,6 +54,7 @@ jobs:
         run: python -m pip install -r requirements.txt
 
       - name: Run KOLPulse Bot
+        shell: bash
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           GROUP_CHAT_ID: ${{ secrets.GROUP_CHAT_ID }}
@@ -58,8 +66,44 @@ jobs:
           PREMIUM_EMOJI_KOL: ${{ secrets.PREMIUM_EMOJI_KOL }}
           PREMIUM_EMOJI_BOT: ${{ secrets.PREMIUM_EMOJI_BOT }}
           PYTHONUNBUFFERED: "1"
-        run: python -u bot.py
+        run: | set +e 
+          # EXACT BOT CYCLE:
+          # 5 hours 30 minutes = 19,800 seconds.
+          MAX_SECONDS=$((5 * 60 * 60 + 30 * 60))
+          END_TIME=$((SECONDS + MAX_SECONDS))
 
+          echo "KOLPulse cycle started."
+          echo "Bot will run for approximately 5h30m."
+
+          while [ "$SECONDS" -lt "$END_TIME" ]; do
+            REMAINING=$((END_TIME - SECONDS))
+
+            echo "=========================================="
+            echo "Starting KOLPulse bot process."
+            echo "Remaining cycle time: ${REMAINING}s"
+            echo "=========================================="
+
+            timeout --foreground               --signal=TERM               --kill-after=30s               "${REMAINING}s"               python -u bot.py
+
+            EXIT_CODE=$?
+
+            if [ "$SECONDS" -ge "$END_TIME" ]; then
+              echo "5h30m cycle completed. Stopping bot normally."
+              break
+            fi
+
+            echo "Bot stopped unexpectedly. Exit code: ${EXIT_CODE}"
+            echo "Restarting bot in 5 seconds..."
+            sleep 5
+          done
+
+          echo "KOLPulse bot cycle finished."
+
+      # Always save the current database before the next cycle.
+      - name: Prepare database backup
+        if: always()
+        shell: bash
+        run: | if [ -f kolpulse.db ]; then echo "Preparing final KOLPulse database backup..." ls -lh kolpulse.db else echo "WARNING: kolpulse.db does not exist." fi 
       - name: Save KOLPulse database
         if: always()
         uses: actions/upload-artifact@v4
@@ -68,3 +112,16 @@ jobs:
           path: kolpulse.db
           if-no-files-found: warn
           retention-days: 90
+
+      # IMPORTANT:
+      # After the database is uploaded, queue the NEXT run automatically.
+      # This creates a continuous 5h30m -> save DB -> next run cycle.
+      - name: Start next 5h30m cycle
+        if: always()
+        shell: bash
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: | echo "Database save step completed." echo "Queueing the next KOLPulse 5h30m cycle..." 
+          gh workflow run bot.yml             --repo "${GITHUB_REPOSITORY}"             --ref main
+
+          echo "Next KOLPulse cycle has been queued."
