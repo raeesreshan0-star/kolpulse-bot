@@ -6,8 +6,6 @@ on:
     branches:
       - main
   schedule:
-    # Backup start: keeps the bot from staying offline if an automatic
-    # workflow dispatch ever fails.
     - cron: "0 */6 * * *"
 
 concurrency:
@@ -43,7 +41,15 @@ jobs:
 
       - name: Check database
         shell: bash
-        run: | if [ -f kolpulse.db ]; then echo "KOLPulse database restored successfully." ls -lh kolpulse.db else echo "No previous kolpulse.db artifact found." echo "Bot will create a new database." fi 
+        run: |
+          if [ -f kolpulse.db ]; then
+            echo "KOLPulse database restored successfully."
+            ls -lh kolpulse.db
+          else
+            echo "No previous kolpulse.db artifact found."
+            echo "Bot will create a new database."
+          fi
+
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -65,8 +71,6 @@ jobs:
           PREMIUM_EMOJI_KOL: ${{ secrets.PREMIUM_EMOJI_KOL }}
           PREMIUM_EMOJI_BOT: ${{ secrets.PREMIUM_EMOJI_BOT }}
           PYTHONUNBUFFERED: "1"
-        # Stop before GitHub's hosted-runner limit so the DB is saved
-        # and the next cycle can start.
         run: timeout --signal=SIGTERM --kill-after=30s 5h20m python -u bot.py
 
       - name: Save KOLPulse database
@@ -79,7 +83,11 @@ jobs:
           retention-days: 90
 
       - name: Start next KOLPulse cycle
-        if: always() && !cancelled()
+        if: ${{ !cancelled() }}
         env:
           GH_TOKEN: ${{ github.token }}
-        run: | echo "Waiting 20 seconds before dispatching the next cycle..." sleep 20 gh workflow run bot.yml --ref main echo "Next KOLPulse cycle dispatched."
+        run: |
+          echo "Waiting 20 seconds before dispatching the next cycle..."
+          sleep 20
+          gh workflow run bot.yml --ref main
+          echo "Next KOLPulse cycle dispatched."
