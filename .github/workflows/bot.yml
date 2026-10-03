@@ -72,4 +72,4 @@ jobs:
           name: kolpulse-db
           path: kolpulse.db
           if-no-files-found: warn
-          retention-days: 90 
+          retention-days: 90
