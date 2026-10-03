@@ -5,6 +5,11 @@ on:
   push:
     branches:
       - main
+  schedule:
+    # GitHub cron cannot run every 5h30m exactly.
+    # This starts a new cycle every 6 hours. Each cycle itself
+    # runs the bot for 5h30m, leaving a safety gap.
+    - cron: "0 */6 * * *"
 
 concurrency:
   group: kolpulse-bot
@@ -17,12 +22,17 @@ permissions:
 jobs:
   run-bot:
     runs-on: ubuntu-latest
+
+    # 5h30m bot runtime + 15m safety margin.
     timeout-minutes: 345
 
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
 
+      # Restore the latest successful database artifact.
+      # This preserves verified channels, promoted calls,
+      # project results, milestones, KOL stats, etc.
       - name: Restore KOLPulse database
         continue-on-error: true
         uses: dawidd6/action-download-artifact@v22
@@ -41,10 +51,14 @@ jobs:
         shell: bash
         run: |
           if [ -f kolpulse.db ]; then
+            echo "========================================"
             echo "KOLPulse database restored successfully."
+            echo "Existing data will be preserved."
             ls -lh kolpulse.db
+            echo "========================================"
           else
-            echo "No previous KOLPulse database found. Creating a new one."
+            echo "No previous kolpulse.db artifact found."
+            echo "Bot will create a new database if needed."
           fi
 
       - name: Setup Python
@@ -73,23 +87,27 @@ jobs:
         run: |
           set +e
 
+          # One bot cycle = 5 hours 30 minutes.
           MAX_SECONDS=$((5 * 60 * 60 + 30 * 60))
           END_TIME=$((SECONDS + MAX_SECONDS))
 
-          echo "KOLPulse cycle started: 5h30m."
+          echo "========================================"
+          echo "KOLPulse bot cycle started."
+          echo "Runtime: 5 hours 30 minutes."
+          echo "========================================"
 
           while [ "$SECONDS" -lt "$END_TIME" ]; do
             REMAINING=$((END_TIME - SECONDS))
 
-            echo "Starting KOLPulse bot."
-            echo "Remaining cycle: ${REMAINING}s"
+            echo "Starting KOLPulse bot process."
+            echo "Remaining cycle time: ${REMAINING}s"
 
             timeout --foreground               --signal=TERM               --kill-after=30s               "${REMAINING}s"               python -u bot.py
 
             EXIT_CODE=$?
 
             if [ "$SECONDS" -ge "$END_TIME" ]; then
-              echo "5h30m completed. Ending this cycle."
+              echo "5h30m cycle completed normally."
               break
             fi
 
@@ -98,19 +116,23 @@ jobs:
             sleep 5
           done
 
-          echo "KOLPulse cycle finished."
+          echo "KOLPulse bot cycle finished."
 
       - name: Check database before backup
         if: always()
         shell: bash
         run: |
           if [ -f kolpulse.db ]; then
+            echo "========================================"
             echo "Database ready for backup:"
             ls -lh kolpulse.db
+            echo "========================================"
           else
-            echo "WARNING: kolpulse.db not found."
+            echo "WARNING: kolpulse.db was not found."
           fi
 
+      # Save the complete SQLite database so the next run
+      # continues from the same data instead of starting empty.
       - name: Save KOLPulse database
         if: always()
         uses: actions/upload-artifact@v4
