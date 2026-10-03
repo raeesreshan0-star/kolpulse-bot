@@ -3201,7 +3201,7 @@ async def send_pump_alert( context, call_id, kol_username, project_name, call_mc
     # EXACT requested visual structure.
     alert_text = (
         f"Accomplishment Unlocked: <b>x{int(milestone)}!</b> ✌️\n\n"
-        f'<a href="{safe_kol_link}">{safe_kol}</a> '
+        f'<a href="{safe_direct_kol_link}">{safe_kol}</a> '
         f"made a <b>x{int(milestone)}+</b> call on "
         f'<a href="{project_deep_link}">{safe_project}</a> '
         f"{chain_emoji}\n\n"
@@ -5746,4 +5746,4 @@ def main():
 
 if __name__ == "__main__":
 
-    main()    
+    main()  
