@@ -52,7 +52,6 @@ jobs:
         run: python -m pip install -r requirements.txt
 
       - name: Run KOLPulse Bot
-        continue-on-error: true
         env:
           BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
           GROUP_CHAT_ID: ${{ secrets.GROUP_CHAT_ID }}
@@ -64,7 +63,15 @@ jobs:
           PREMIUM_EMOJI_KOL: ${{ secrets.PREMIUM_EMOJI_KOL }}
           PREMIUM_EMOJI_BOT: ${{ secrets.PREMIUM_EMOJI_BOT }}
           PYTHONUNBUFFERED: "1"
-        run: 'timeout --signal=SIGTERM --kill-after=30s 5h20m python -u bot.py'
+        shell: bash
+        run: |
+          timeout --signal=SIGTERM --kill-after=30s 19200s python -u bot.py
+          status=$?
+          if [ "$status" -eq 124 ]; then
+            echo "Bot reached the planned 5h20m runtime; exiting normally."
+            exit 0
+          fi
+          exit "$status"
 
       - name: Save KOLPulse database
         if: always()
