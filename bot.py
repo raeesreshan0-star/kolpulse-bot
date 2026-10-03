@@ -3130,71 +3130,92 @@ async def setmilestone( update: Update, context: ContextTypes.DEFAULT_TYPE ):
 # PUMP ALERT
 # =========================================================
 
-async def send_pump_alert( context, call_id, kol_username, project_name, call_mc, current_mc, multiplier, milestone, original_call_link, kol_link, contract ):
+async def send_pump_alert( context, call_id, kol_username, project_name, call_mc, current_mc, multiplier, milestone, original_call_link, kol_link, contract, ):
+    """ KOLPulse milestone alert. Layout intentionally follows the requested KolScope-style design: Accomplishment Unlocked: x2! ✌️ @KOL made a x2+ call on PROJECT CALL_MC ➡️ CURRENT_MC 📊 KOLPulse 👁 View Call 📊 View Stats 💠 KOL All links are dynamic: - PROJECT -> KOLPulse project profile - View Call -> original Telegram call - View Stats -> KOL profile inside KOLPulse - KOL -> the promoter's Telegram channel """
 
-    safe_kol = html.escape(
-        kol_username or "@KOL"
+    safe_kol = html.escape(kol_username or "@KOL")
+    safe_project = html.escape(project_name or "$TOKEN")
+
+    call_mc_text = format_market_cap(call_mc)
+    current_mc_text = format_market_cap(current_mc)
+
+    # Project deep-link: clicking the token/project opens the complete
+    # project profile showing all callers and their call/results data.
+    project_deep_link = html.escape(
+        _project_deep_link(project_name, contract),
+        quote=True,
     )
 
-    safe_project = html.escape(
-        project_name or "$TOKEN"
+    # Original call link.
+    safe_call_link = html.escape(
+        str(original_call_link or "").strip(),
+        quote=True,
     )
 
-    safe_contract = html.escape(
-        contract or "N/A"
+    # KOL profile deep-link inside KOLPulse.
+    kol_start = urllib.parse.quote(
+        str(kol_username or "").lstrip("@"),
+        safe="",
+    )
+    kol_stats_link = html.escape(
+        f"{BOT_LINK}?start=kol_{kol_start}",
+        quote=True,
     )
 
-    call_mc_text = format_market_cap(
-        call_mc
+    # Direct Telegram channel link.
+    direct_kol_link = str(kol_link or "").strip()
+    if not direct_kol_link:
+        direct_kol_link = (
+            f"https://t.me/{str(kol_username or '').lstrip('@')}"
+        )
+    safe_direct_kol_link = html.escape(
+        direct_kol_link,
+        quote=True,
     )
 
-    current_mc_text = format_market_cap(
-        current_mc
-    )
+    # Keep the chain/project area clean and similar to the reference design.
+    chain_symbol = None
+    try:
+        conn = get_connection()
+        cursor = conn.cursor()
+        cursor.execute(
+            "SELECT chain FROM calls WHERE id = ? LIMIT 1",
+            (call_id,),
+        )
+        row = cursor.fetchone()
+        if row:
+            chain_symbol = row[0]
+    except Exception as error:
+        print(
+            f"⚠️ Could not load chain for milestone #{call_id}: "
+            f"{type(error).__name__}: {error}"
+        )
+    finally:
+        try:
+            conn.close()
+        except Exception:
+            pass
 
+    chain_emoji = chain_custom_emoji(chain_symbol)
+
+    # EXACT requested visual structure.
     alert_text = (
-
-        f"🚀 <b>{milestone}X PUMP HIT!</b>\n\n"
-
-        f"🔮 <b>{safe_project}</b>\n"
-
-        f"👤 KOL: "
-        f"<a href=\"{kol_link}\">"
-        f"{safe_kol}"
-        f"</a>\n\n"
-
-        f"💰 Call MC: "
-        f"{call_mc_text}\n"
-
-        f"📈 Current MC: "
-        f"{current_mc_text}\n"
-
-        f"🚀 Performance: "
-        f"<b>{multiplier:.2f}X</b>\n\n"
-
-        f"CA: <code>"
-        f"{safe_contract}"
-        f"</code>\n\n"
-
-        f"🔎 <a href=\"{original_call_link}\">"
-        f"CALL"
-        f"</a> "
-
-        f"👤 <a href=\"{kol_link}\">"
-        f"KOL"
-        f"</a> "
-
-        f"🤖 <a href=\"{BOT_LINK}\">"
-        f"BOT"
-        f"</a>"
+        f"Accomplishment Unlocked: <b>x{int(milestone)}!</b> ✌️\n\n"
+        f'<a href="{safe_kol_link}">{safe_kol}</a> '
+        f"made a <b>x{int(milestone)}+</b> call on "
+        f'<a href="{project_deep_link}">{safe_project}</a> '
+        f"{chain_emoji}\n\n"
+        f"<b>{call_mc_text}</b> ➡️ <b>{current_mc_text}</b> "
+        f"📊 KOLPulse\n\n"
+        f'<a href="{safe_call_link}">👁 View Call</a> '
+        f'<a href="{kol_stats_link}">📊 View Stats</a> '
+        f'<a href="{safe_direct_kol_link}">💠 KOL</a>'
     )
 
     try:
-
         milestone_video = get_milestone_video(milestone)
 
         if milestone_video:
-
             video_file_id, video_type = milestone_video
 
             if video_type == "animation":
@@ -3212,18 +3233,12 @@ async def send_pump_alert( context, call_id, kol_username, project_name, call_mc
                     parse_mode="HTML",
                 )
 
-            # IMPORTANT: milestone videos are dedicated to this milestone.
-            # Never write them into calls.video_file_id because that column
-            # belongs to the normal promotional-call video.
             print(
-                f"🚀 {milestone}X ALERT + dedicated milestone video SENT "
-                f"for call #{call_id}"
+                f"🚀 {milestone}X KOLPulse milestone alert + "
+                f"dedicated milestone video SENT for call #{call_id}"
             )
-
         else:
-
-            # No dedicated milestone video has been saved yet.
-            # Keep the existing text-only fallback.
+            # Text fallback if a dedicated video has not been assigned.
             await context.bot.send_message(
                 chat_id=LIVE_CHANNEL,
                 text=alert_text,
@@ -3232,20 +3247,18 @@ async def send_pump_alert( context, call_id, kol_username, project_name, call_mc
             )
 
             print(
-                f"🚀 {milestone}X ALERT SENT WITHOUT VIDEO "
-                f"for call #{call_id}"
+                f"🚀 {milestone}X KOLPulse milestone alert SENT "
+                f"without video for call #{call_id}"
             )
 
         return True
 
     except Exception as error:
-
         print(
-            f"❌ Could not send {milestone}X alert "
+            f"❌ Could not send {milestone}X KOLPulse milestone alert "
             f"for call #{call_id}: "
             f"{type(error).__name__}: {error}"
         )
-
         return False
 
 
@@ -5733,4 +5746,4 @@ def main():
 
 if __name__ == "__main__":
 
-    main()  
+    main()    
