@@ -1,97 +1,306 @@
-name: KOLPulse Bot
+import sqlite3
+from datetime import datetime
 
-on:
-  workflow_dispatch:
-  schedule:
-    - cron: "0 */6 * * *"
 
-concurrency:
-  group: kolpulse-bot
-  cancel-in-progress: false
+# Persistent SQLite database file used by KOLPulse.
+# The GitHub Actions workflow restores/saves this file between runs.
+DATABASE_NAME = "kolpulse.db"
 
-permissions:
-  contents: read
-  actions: read
 
-jobs:
-  run-bot:
-    runs-on: ubuntu-latest
-    timeout-minutes: 345
+def get_connection():
+    return sqlite3.connect(DATABASE_NAME, timeout=30)
 
-    steps:
-      - name: Checkout repository
-        uses: actions/checkout@v4
 
-      # IMPORTANT:
-      # Restore the database from known-good workflow run #880.
-      # This is intentionally NOT "latest successful", because newer
-      # runs may contain the empty/fresh database that caused data loss.
-      - name: Recover old KOLPulse database from run #880
-        uses: dawidd6/action-download-artifact@v25
-        with:
-          github_token: ${{ secrets.GITHUB_TOKEN }}
-          workflow: bot.yml
-          run_number: 880
-          name: kolpulse-db
-          path: .
-          if_no_artifact_found: fail
+# =========================================================
+# DATABASE INITIALIZATION
+# =========================================================
 
-      - name: Verify recovered database
-        shell: bash
-        run: |
-          if [ ! -f kolpulse.db ]; then
-            echo "ERROR: kolpulse.db was not recovered."
-            exit 1
-          fi
+def init_database():
 
-          echo "Recovered database:"
-          ls -lh kolpulse.db
+    conn = get_connection()
+    cursor = conn.cursor()
 
-          echo "Database tables:"
-          sqlite3 kolpulse.db ".tables"
+    # =====================================================
+    # CALLS
+    # =====================================================
 
-          echo "Verified channels:"
-          sqlite3 kolpulse.db "SELECT COUNT(*) FROM verified_channels;"
+    cursor.execute(""" CREATE TABLE IF NOT EXISTS calls ( id INTEGER PRIMARY KEY AUTOINCREMENT, kol_username TEXT NOT NULL, kol_link TEXT, project_name TEXT NOT NULL, project_link TEXT, original_call_link TEXT, call_mc REAL, current_mc REAL, multiplier REAL DEFAULT 0, call_time TEXT, video_file_id TEXT, status TEXT DEFAULT 'live', created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ) """)
 
-          echo "Saved calls:"
-          sqlite3 kolpulse.db "SELECT COUNT(*) FROM calls;"
+    # =====================================================
+    # VERIFIED CHANNELS
+    # =====================================================
 
-      - name: Setup Python
-        uses: actions/setup-python@v5
-        with:
-          python-version: "3.11"
+    cursor.execute(""" CREATE TABLE IF NOT EXISTS verified_channels ( id INTEGER PRIMARY KEY AUTOINCREMENT, channel_username TEXT UNIQUE NOT NULL, user_id INTEGER, verified_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ) """)
 
-      - name: Install dependencies
-        run: python -m pip install -r requirements.txt
+    # =====================================================
+    # PENDING CHANNEL REQUESTS
+    # =====================================================
 
-      - name: Run KOLPulse Bot
-        continue-on-error: true
-        env:
-          BOT_TOKEN: ${{ secrets.BOT_TOKEN }}
-          GROUP_CHAT_ID: ${{ secrets.GROUP_CHAT_ID }}
-          OWNER_USER_ID: ${{ secrets.OWNER_USER_ID }}
-          PROMOTIONAL_VIDEO_FILE_ID: ${{ secrets.PROMOTIONAL_VIDEO_FILE_ID }}
-          PREMIUM_EMOJI_CALL: ${{ secrets.PREMIUM_EMOJI_CALL }}
-          PREMIUM_EMOJI_PLANE: ${{ secrets.PREMIUM_EMOJI_PLANE }}
-          PREMIUM_EMOJI_CONTRACT: ${{ secrets.PREMIUM_EMOJI_CONTRACT }}
-          PREMIUM_EMOJI_KOL: ${{ secrets.PREMIUM_EMOJI_KOL }}
-          PREMIUM_EMOJI_BOT: ${{ secrets.PREMIUM_EMOJI_BOT }}
-          PYTHONUNBUFFERED: "1"
-        shell: bash
-        run: |
-          timeout --signal=SIGTERM --kill-after=30s 19200s python -u bot.py
-          status=$?
-          if [ "$status" -eq 124 ]; then
-            echo "Planned 5h20m runtime reached."
-            exit 0
-          fi
-          exit "$status"
+    cursor.execute(""" CREATE TABLE IF NOT EXISTS channel_requests ( id INTEGER PRIMARY KEY AUTOINCREMENT, channel_username TEXT UNIQUE NOT NULL, user_id INTEGER, status TEXT DEFAULT 'pending', submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ) """)
 
-      - name: Save KOLPulse database
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: kolpulse-db
-          path: kolpulse.db
-          if-no-files-found: fail
-          retention-days: 90
+    conn.commit()
+    conn.close()
+
+
+# =========================================================
+# NORMALIZE CHANNEL USERNAME
+# =========================================================
+
+def normalize_channel_username(channel_username):
+
+    channel_username = channel_username.strip()
+
+    if "t.me/" in channel_username:
+
+        channel_username = channel_username.split(
+            "t.me/",
+            1
+        )[1]
+
+        channel_username = channel_username.split(
+            "?",
+            1
+        )[0]
+
+        channel_username = channel_username.split(
+            "/",
+            1
+        )[0]
+
+    channel_username = channel_username.lstrip("@")
+
+    return channel_username.lower()
+
+
+# =========================================================
+# VERIFIED CHANNELS
+# =========================================================
+
+def add_verified_channel( channel_username, user_id=None ):
+
+    channel_username = normalize_channel_username(
+        channel_username
+    )
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    verified_at = datetime.utcnow().strftime(
+        "%Y-%m-%d %H:%M:%S"
+    )
+
+    cursor.execute(""" INSERT OR REPLACE INTO verified_channels ( channel_username, user_id, verified_at ) VALUES (?, ?, ?) """, (
+        channel_username,
+        user_id,
+        verified_at,
+    ))
+
+    # Remove pending request after approval
+    cursor.execute(""" DELETE FROM channel_requests WHERE channel_username = ? """, (
+        channel_username,
+    ))
+
+    conn.commit()
+    conn.close()
+
+    return verified_at
+
+
+def get_verified_channel(channel_username):
+
+    channel_username = normalize_channel_username(
+        channel_username
+    )
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(""" SELECT id, channel_username, user_id, verified_at FROM verified_channels WHERE channel_username = ? """, (
+        channel_username,
+    ))
+
+    result = cursor.fetchone()
+
+    conn.close()
+
+    return result
+
+
+def get_verified_at(channel_username):
+
+    result = get_verified_channel(
+        channel_username
+    )
+
+    if not result:
+        return None
+
+    return result[3]
+
+
+# =========================================================
+# PENDING REQUESTS
+# =========================================================
+
+def add_pending_channel( channel_username, user_id=None ):
+
+    channel_username = normalize_channel_username(
+        channel_username
+    )
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(""" INSERT OR IGNORE INTO channel_requests ( channel_username, user_id, status ) VALUES (?, ?, 'pending') """, (
+        channel_username,
+        user_id,
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+def get_pending_channel(channel_username):
+
+    channel_username = normalize_channel_username(
+        channel_username
+    )
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(""" SELECT id, channel_username, user_id, status, submitted_at FROM channel_requests WHERE channel_username = ? AND status = 'pending' """, (
+        channel_username,
+    ))
+
+    result = cursor.fetchone()
+
+    conn.close()
+
+    return result
+
+
+def remove_pending_channel(channel_username):
+
+    channel_username = normalize_channel_username(
+        channel_username
+    )
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(""" DELETE FROM channel_requests WHERE channel_username = ? """, (
+        channel_username,
+    ))
+
+    conn.commit()
+    conn.close()
+
+
+# =========================================================
+# CALLS
+# =========================================================
+
+def add_call( kol_username, project_name, kol_link=None, project_link=None, original_call_link=None, call_mc=None, current_mc=None, multiplier=0, call_time=None, video_file_id=None, status="live", ):
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(""" INSERT INTO calls ( kol_username, kol_link, project_name, project_link, original_call_link, call_mc, current_mc, multiplier, call_time, video_file_id, status ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?) """, (
+        kol_username,
+        kol_link,
+        project_name,
+        project_link,
+        original_call_link,
+        call_mc,
+        current_mc,
+        multiplier,
+        call_time,
+        video_file_id,
+        status,
+    ))
+
+    conn.commit()
+
+    call_id = cursor.lastrowid
+
+    conn.close()
+
+    return call_id
+
+
+def get_live_calls():
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(""" SELECT * FROM calls WHERE status = 'live' ORDER BY created_at DESC """)
+
+    calls = cursor.fetchall()
+
+    conn.close()
+
+    return calls
+
+
+# =========================================================
+# SEARCH KOL CALLS
+# =========================================================
+
+def get_calls_for_kol_after_verification( kol_username, verified_at ):
+
+    kol_username = normalize_channel_username(
+        kol_username
+    )
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(""" SELECT * FROM calls WHERE LOWER( REPLACE(kol_username, '@', '') ) = ? AND created_at >= ? ORDER BY created_at DESC """, (
+        kol_username,
+        verified_at,
+    ))
+
+    calls = cursor.fetchall()
+
+    conn.close()
+
+    return calls
+
+
+# =========================================================
+# UPDATE CALL MULTIPLIER
+# =========================================================
+
+def update_call_multiplier( call_id, current_mc, multiplier ):
+
+    conn = get_connection()
+    cursor = conn.cursor()
+
+    cursor.execute(""" UPDATE calls SET current_mc = ?, multiplier = ? WHERE id = ? """, (
+        current_mc,
+        multiplier,
+        call_id,
+    ))
+
+    conn.commit()
+    conn.close()
+
+def is_verified_channel(channel_username):
+    """Return True when the channel is already present in verified_channels."""
+    return get_verified_channel(channel_username) is not None
+
+
+def get_all_verified_channels():
+    """Return all currently verified channel usernames."""
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT channel_username FROM verified_channels "
+            "ORDER BY verified_at ASC"
+        )
+        return [row[0] for row in cur.fetchall()]
+    finally:
+        conn.close()
+       
