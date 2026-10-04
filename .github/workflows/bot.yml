@@ -5,6 +5,8 @@ on:
   push:
     branches:
       - main
+    paths-ignore:
+      - "kolpulse.db"
   schedule:
     - cron: "0 */6 * * *"
 
@@ -12,8 +14,12 @@ concurrency:
   group: kolpulse-bot
   cancel-in-progress: false
 
+# IMPORTANT:
+# The database is committed back to the repository after every run.
+# This makes KOLPulse data persistent across GitHub Actions runners,
+# not dependent only on temporary workflow artifacts.
 permissions:
-  contents: read
+  contents: write
   actions: write
 
 jobs:
@@ -24,6 +30,8 @@ jobs:
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
 
       - name: Restore KOLPulse database
         continue-on-error: true
@@ -41,7 +49,14 @@ jobs:
 
       - name: Check database
         shell: bash
-        run: 'if [ -f kolpulse.db ]; then echo "KOLPulse database restored successfully."; ls -lh kolpulse.db; else echo "No previous kolpulse.db artifact found."; echo "Bot will create a new database."; fi'
+        run: |
+          if [ -f kolpulse.db ]; then
+            echo "✅ KOLPulse database is available."
+            ls -lh kolpulse.db
+          else
+            echo "ℹ️ No previous artifact found."
+            echo "The database will be created only if this is the first run."
+          fi
 
       - name: Setup Python
         uses: actions/setup-python@v5
@@ -73,7 +88,9 @@ jobs:
           fi
           exit "$status"
 
-      - name: Save KOLPulse database
+      # Keep the artifact as a short-term recovery copy.
+      # The repository copy below is the permanent source of truth.
+      - name: Backup KOLPulse database artifact
         if: always()
         uses: actions/upload-artifact@v4
         with:
@@ -81,3 +98,30 @@ jobs:
           path: kolpulse.db
           if-no-files-found: warn
           retention-days: 90
+
+      - name: Persist KOLPulse database to repository
+        if: always() && hashFiles('kolpulse.db') != ''
+        shell: bash
+        run: |
+          set -e
+
+          git config user.name "KOLPulse Bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+
+          # Stage the current database even if it is ignored by .gitignore.
+          git add -f kolpulse.db
+
+          if git diff --cached --quiet -- kolpulse.db; then
+            echo "ℹ️ No database changes to commit."
+            exit 0
+          fi
+
+          git commit -m "chore: persist KOLPulse database"
+
+          # If code was pushed while this run was active, bring that commit
+          # into this branch without discarding this run's database.
+          git fetch origin main
+          git merge origin/main --no-edit -X ours
+
+          git push origin HEAD:main
+          echo "✅ KOLPulse database permanently persisted to main."
