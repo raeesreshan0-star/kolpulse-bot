@@ -33,7 +33,10 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Restore KOLPulse database
+      # The committed repository database is the PRIMARY source of truth.
+      # Never overwrite a newer kolpulse.db with an older artifact.
+      - name: Restore KOLPulse database (artifact fallback only)
+        if: ${{ !hashFiles('kolpulse.db') }}
         continue-on-error: true
         uses: dawidd6/action-download-artifact@v22
         with:
@@ -49,15 +52,10 @@ jobs:
 
       - name: Check database
         shell: bash
-        run: |
-          if [ -f kolpulse.db ]; then
-            echo "✅ KOLPulse database is available."
-            ls -lh kolpulse.db
-          else
-            echo "ℹ️ No previous artifact found."
-            echo "The database will be created only if this is the first run."
-          fi
-
+        run: | if [ -f kolpulse.db ]; then echo "✅ KOLPulse database is available." ls -lh kolpulse.db else echo "ℹ️ No previous artifact found." echo "The database will be created only if this is the first run." fi 
+      - name: Verify database integrity
+        shell: bash
+        run: | if [ -f kolpulse.db ]; then python - <<'PY' import sqlite3 conn = sqlite3.connect("kolpulse.db") try: result = conn.execute("PRAGMA integrity_check").fetchone()[0] if result != "ok": raise SystemExit(f"❌ SQLite integrity check failed: {result}") print("✅ SQLite integrity check: ok") tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")} required = {"calls", "verified_channels"} missing = required - tables if missing: raise SystemExit(f"❌ Database is missing required tables: {sorted(missing)}") print("✅ Required KOLPulse tables are present.") finally: conn.close() PY fi 
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
@@ -79,15 +77,7 @@ jobs:
           PREMIUM_EMOJI_BOT: ${{ secrets.PREMIUM_EMOJI_BOT }}
           PYTHONUNBUFFERED: "1"
         shell: bash
-        run: |
-          timeout --signal=SIGTERM --kill-after=30s 19200s python -u bot.py
-          status=$?
-          if [ "$status" -eq 124 ]; then
-            echo "Bot reached the planned 5h20m runtime; exiting normally."
-            exit 0
-          fi
-          exit "$status"
-
+        run: | timeout --signal=SIGTERM --kill-after=30s 19200s python -u bot.py status=$? if [ "$status" -eq 124 ]; then echo "Bot reached the planned 5h20m runtime; exiting normally." exit 0 fi exit "$status" 
       # Keep the artifact as a short-term recovery copy.
       # The repository copy below is the permanent source of truth.
       - name: Backup KOLPulse database artifact
@@ -102,9 +92,7 @@ jobs:
       - name: Persist KOLPulse database to repository
         if: always() && hashFiles('kolpulse.db') != ''
         shell: bash
-        run: |
-          set -e
-
+        run: | set -e 
           git config user.name "KOLPulse Bot"
           git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
 
@@ -118,10 +106,10 @@ jobs:
 
           git commit -m "chore: persist KOLPulse database"
 
-          # If code was pushed while this run was active, bring that commit
-          # into this branch without discarding this run's database.
+          # The database commit is the permanent source of truth.
+          # Do not replace it with an older artifact on the next run.
           git fetch origin main
           git merge origin/main --no-edit -X ours
 
           git push origin HEAD:main
-          echo "✅ KOLPulse database permanently persisted to main."
+          echo "✅ KOLPulse database permanently persisted to main." 
