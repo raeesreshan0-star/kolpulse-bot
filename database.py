@@ -1,5 +1,5 @@
 import sqlite3
-from datetime import datetime
+from datetime import datetime, timedelta
 
 
 # Persistent SQLite database file used by KOLPulse.
@@ -37,6 +37,10 @@ def init_database():
     # =====================================================
 
     cursor.execute(""" CREATE TABLE IF NOT EXISTS channel_requests ( id INTEGER PRIMARY KEY AUTOINCREMENT, channel_username TEXT UNIQUE NOT NULL, user_id INTEGER, status TEXT DEFAULT 'pending', submitted_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ) """)
+
+    # Archived verification records are kept permanently so removing an old
+    # active verification never removes the channel's historical data.
+    cursor.execute(""" CREATE TABLE IF NOT EXISTS verified_channels_archive ( id INTEGER PRIMARY KEY, channel_username TEXT NOT NULL, user_id INTEGER, verified_at TIMESTAMP, archived_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP ) """)
 
     conn.commit()
     conn.close()
@@ -303,4 +307,65 @@ def get_all_verified_channels():
         return [row[0] for row in cur.fetchall()]
     finally:
         conn.close()
+
+
+# =========================================================
+# VERIFIED CHANNEL RETENTION
+# =========================================================
+
+VERIFIED_CHANNEL_RETENTION_DAYS = 30
+
+def cleanup_expired_verified_channels(retention_days=VERIFIED_CHANNEL_RETENTION_DAYS):
+    """
+    Remove active verified-channel entries only after the full retention
+    period has passed. Historical channel data is archived first.
+
+    IMPORTANT: This function NEVER deletes calls, milestones, videos,
+    projects, or any other tracking data. It only removes the active
+    verification entry after 30 days.
+    """
+    conn = get_connection()
+    try:
+        cur = conn.cursor()
+        cutoff = datetime.utcnow() - timedelta(days=int(retention_days))
+        cutoff_text = cutoff.strftime("%Y-%m-%d %H:%M:%S")
+
+        cur.execute(
+            """SELECT id, channel_username, user_id, verified_at
+               FROM verified_channels
+               WHERE verified_at IS NOT NULL AND verified_at <= ?""",
+            (cutoff_text,),
+        )
+        expired = cur.fetchall()
+
+        if not expired:
+            return 0
+
+        for row in expired:
+            channel_id, channel_username, user_id, verified_at = row
+            cur.execute(
+                """INSERT OR IGNORE INTO verified_channels_archive
+                   (id, channel_username, user_id, verified_at, archived_at)
+                   VALUES (?, ?, ?, ?, CURRENT_TIMESTAMP)""",
+                (channel_id, channel_username, user_id, verified_at),
+            )
+
+        ids = [row[0] for row in expired]
+        cur.executemany(
+            "DELETE FROM verified_channels WHERE id = ?",
+            [(channel_id,) for channel_id in ids],
+        )
+
+        conn.commit()
+        print(
+            f"🧹 Archived {len(expired)} verified channel(s) older than "
+            f"{int(retention_days)} days. Calls and tracking data were kept."
+        )
+        return len(expired)
+    except Exception:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
        
+ 
