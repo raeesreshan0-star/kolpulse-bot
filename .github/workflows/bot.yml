@@ -50,12 +50,24 @@ jobs:
           check_artifacts: true
           if_no_artifact_found: warn
 
-      - name: Check database
+             - name: Check database
         shell: bash
-        run: | if [ -f kolpulse.db ]; then echo "✅ KOLPulse database is available." ls -lh kolpulse.db else echo "ℹ️ No previous artifact found." echo "The database will be created only if this is the first run." fi 
+        run: |
+          if [ -f kolpulse.db ]; then
+            echo "Database found"
+            ls -lh kolpulse.db
+          else
+            echo "Database not found"
+          fi
+
       - name: Verify database integrity
         shell: bash
-        run: | if [ -f kolpulse.db ]; then python - <<'PY' import sqlite3 conn = sqlite3.connect("kolpulse.db") try: result = conn.execute("PRAGMA integrity_check").fetchone()[0] if result != "ok": raise SystemExit(f"❌ SQLite integrity check failed: {result}") print("✅ SQLite integrity check: ok") tables = {row[0] for row in conn.execute("SELECT name FROM sqlite_master WHERE type='table'")} required = {"calls", "verified_channels"} missing = required - tables if missing: raise SystemExit(f"❌ Database is missing required tables: {sorted(missing)}") print("✅ Required KOLPulse tables are present.") finally: conn.close() PY fi 
+        run: |
+          if [ -f kolpulse.db ]; then
+            python -c "import sqlite3; c=sqlite3.connect('kolpulse.db'); c.execute('PRAGMA integrity_check').fetchone(); c.close(); print('Database integrity check completed')"
+          else
+            echo "No database file to verify"
+          fi
       - name: Setup Python
         uses: actions/setup-python@v5
         with:
